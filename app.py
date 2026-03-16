@@ -4,17 +4,18 @@ from tkinter import ttk
 BG = "#f4f4f4"
 LINE = "#222222"
 YELLOW = "#ffe94d"
-BLUE = "#21a7df"
+BLUE = "#2459ff"
 ORANGE = "#f7b52c"
 TRAY = "#111111"
-CASE = "#2459ff"
+PURPLE = "#8e44ad"
 RED = "#cc2f2f"
+
 
 class SimApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Grinding / Bundle Flow Simulator v3")
-        self.root.geometry("1700x930")
+        self.root.title("Grinding / Bundle Flow Simulator v4")
+        self.root.geometry("1450x900")
         self.root.configure(bg=BG)
 
         self.mode = tk.StringVar(value="normal")
@@ -23,22 +24,31 @@ class SimApp:
         self.changeovers = tk.IntVar(value=0)
         self.sim_minutes = tk.DoubleVar(value=60.0)
         self.time_scale = tk.DoubleVar(value=120.0)
-        self.running = False
         self.show_labels = tk.BooleanVar(value=True)
+        self.fit_to_window = tk.BooleanVar(value=False)
+
+        self.running = False
+        self.elapsed_sim_sec = 0.0
+        self.last_spawn_sec = 0.0
+        self.completed_changeovers = 0
+        self.changeover_active = False
+        self.changeover_end_sec = 0.0
+
+        self.tray_total = 0
+        self.regular_case_total = 0
+        self.bundle_case_total = 0
+        self.regular_pack_buffer = 0
+        self.bundle_pack_buffer = 0
 
         self.tray_items = []
         self.case_items = []
         self.employee_items = {}
         self.employee_labels = {}
+        self.kpis = {}
 
-        self.elapsed_sim_sec = 0.0
-        self.last_spawn_sec = 0.0
-        self.normal_tray_count = 0
-        self.case_count = 0
-        self.tray_total = 0
-        self.changeover_active = False
-        self.changeover_end_sec = 0.0
-        self.completed_changeovers = 0
+        self.design_w = 1900
+        self.design_h = 820
+        self.scale_factor = 1.0
 
         self._build_ui()
         self._draw_layout()
@@ -48,48 +58,48 @@ class SimApp:
 
     def _build_ui(self):
         top = tk.Frame(self.root, bg=BG)
-        top.pack(fill="x", padx=10, pady=8)
+        top.pack(fill="x", padx=8, pady=6)
 
         ttk.Label(top, text="Mode").pack(side="left")
         ttk.Radiobutton(top, text="Normal Pack", variable=self.mode, value="normal", command=self._refresh_mode).pack(side="left", padx=4)
-        ttk.Radiobutton(top, text="Bundle Mode", variable=self.mode, value="bundle", command=self._refresh_mode).pack(side="left", padx=(0, 12))
+        ttk.Radiobutton(top, text="Bundle Mode", variable=self.mode, value="bundle", command=self._refresh_mode).pack(side="left", padx=(0, 10))
 
         ttk.Label(top, text="Grinding trays/min").pack(side="left")
-        ttk.Scale(top, from_=10, to=90, variable=self.trays_per_min, orient="horizontal", length=180, command=lambda _=None: self._update_labels()).pack(side="left", padx=4)
+        ttk.Scale(top, from_=10, to=90, variable=self.trays_per_min, orient="horizontal", length=160, command=lambda _=None: self._update_labels()).pack(side="left", padx=4)
         self.lbl_tpm = ttk.Label(top, text="")
-        self.lbl_tpm.pack(side="left", padx=(0, 12))
+        self.lbl_tpm.pack(side="left", padx=(0, 10))
 
         ttk.Label(top, text="Bundle trays/min").pack(side="left")
-        ttk.Scale(top, from_=10, to=90, variable=self.bundle_trays_per_min, orient="horizontal", length=180, command=lambda _=None: self._update_labels()).pack(side="left", padx=4)
+        ttk.Scale(top, from_=10, to=90, variable=self.bundle_trays_per_min, orient="horizontal", length=160, command=lambda _=None: self._update_labels()).pack(side="left", padx=4)
         self.lbl_btpm = ttk.Label(top, text="")
-        self.lbl_btpm.pack(side="left", padx=(0, 12))
+        self.lbl_btpm.pack(side="left", padx=(0, 10))
 
         ttk.Label(top, text="Changeovers").pack(side="left")
         ttk.Spinbox(top, from_=0, to=20, width=5, textvariable=self.changeovers, command=self._update_labels).pack(side="left", padx=4)
 
-        ttk.Label(top, text="Sim minutes").pack(side="left", padx=(12, 0))
+        ttk.Label(top, text="Sim minutes").pack(side="left", padx=(8, 0))
         ttk.Spinbox(top, from_=10, to=240, width=6, textvariable=self.sim_minutes, command=self._update_labels).pack(side="left", padx=4)
 
-        ttk.Label(top, text="Speed-up").pack(side="left", padx=(12, 0))
-        ttk.Scale(top, from_=30, to=300, variable=self.time_scale, orient="horizontal", length=140, command=lambda _=None: self._update_labels()).pack(side="left", padx=4)
+        ttk.Label(top, text="Speed-up").pack(side="left", padx=(8, 0))
+        ttk.Scale(top, from_=30, to=300, variable=self.time_scale, orient="horizontal", length=120, command=lambda _=None: self._update_labels()).pack(side="left", padx=4)
         self.lbl_scale = ttk.Label(top, text="")
-        self.lbl_scale.pack(side="left", padx=(0, 12))
+        self.lbl_scale.pack(side="left", padx=(0, 8))
 
         controls = tk.Frame(self.root, bg=BG)
-        controls.pack(fill="x", padx=10, pady=(0, 8))
+        controls.pack(fill="x", padx=8, pady=(0, 6))
 
         ttk.Button(controls, text="Start", command=self.start).pack(side="left")
         ttk.Button(controls, text="Pause", command=self.pause).pack(side="left", padx=4)
         ttk.Button(controls, text="Reset", command=self.reset).pack(side="left", padx=4)
-        ttk.Checkbutton(controls, text="Show Labels", variable=self.show_labels, command=self._refresh_mode).pack(side="left", padx=8)
+        ttk.Checkbutton(controls, text="Show Labels", variable=self.show_labels, command=self._refresh_mode).pack(side="left", padx=6)
+        ttk.Checkbutton(controls, text="Fit to window", variable=self.fit_to_window, command=self._redraw_scaled).pack(side="left", padx=6)
 
-        self.status = ttk.Label(controls, text="Ready. Normal mode now sends trays up and across between positions 4 and 5.")
-        self.status.pack(side="left", padx=16)
+        self.status = ttk.Label(controls, text="Ready. Red = regular tray path | Blue = regular box path | Orange = bundle tray path | Purple = bundle box path.")
+        self.status.pack(side="left", padx=12)
 
         kpi_row = tk.Frame(self.root, bg=BG)
-        kpi_row.pack(fill="x", padx=10, pady=(0, 8))
-        self.kpis = {}
-        for label in ["Minutes Simulated", "Trays Produced", "Cases Produced", "Completed Changeovers", "Backlog"]:
+        kpi_row.pack(fill="x", padx=8, pady=(0, 6))
+        for label in ["Minutes Simulated", "Trays Produced", "Regular Cases", "Bundle Cases", "Completed Changeovers", "Backlog"]:
             box = tk.Frame(kpi_row, bg="white", highlightbackground="#bbbbbb", highlightthickness=1)
             box.pack(side="left", padx=4)
             tk.Label(box, text=label, font=("Arial", 10, "bold"), bg="white").pack(padx=10, pady=(6, 2))
@@ -97,112 +107,157 @@ class SimApp:
             val.pack(padx=10, pady=(0, 6))
             self.kpis[label] = val
 
-        self.canvas = tk.Canvas(self.root, width=1660, height=760, bg=BG, highlightthickness=0)
-        self.canvas.pack(padx=10, pady=6)
+        canvas_wrap = tk.Frame(self.root, bg=BG)
+        canvas_wrap.pack(fill="both", expand=True, padx=8, pady=6)
+
+        self.canvas = tk.Canvas(canvas_wrap, width=1380, height=720, bg=BG, highlightthickness=0, scrollregion=(0, 0, self.design_w, self.design_h))
+        self.hbar = ttk.Scrollbar(canvas_wrap, orient="horizontal", command=self.canvas.xview)
+        self.vbar = ttk.Scrollbar(canvas_wrap, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=self.hbar.set, yscrollcommand=self.vbar.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vbar.grid(row=0, column=1, sticky="ns")
+        self.hbar.grid(row=1, column=0, sticky="ew")
+        canvas_wrap.rowconfigure(0, weight=1)
+        canvas_wrap.columnconfigure(0, weight=1)
+
+        self.root.bind("<Configure>", self._on_resize)
+
+    def _on_resize(self, event):
+        if self.fit_to_window.get():
+            self._redraw_scaled()
+
+    def sx(self, x):
+        return x * self.scale_factor
+
+    def sy(self, y):
+        return y * self.scale_factor
+
+    def _redraw_scaled(self):
+        if self.fit_to_window.get():
+            w = max(1000, self.canvas.winfo_width())
+            h = max(500, self.canvas.winfo_height())
+            self.scale_factor = min(w / self.design_w, h / self.design_h)
+            self.canvas.configure(scrollregion=(0, 0, self.design_w * self.scale_factor, self.design_h * self.scale_factor))
+            self.hbar.grid_remove()
+            self.vbar.grid_remove()
+        else:
+            self.scale_factor = 1.0
+            self.canvas.configure(scrollregion=(0, 0, self.design_w, self.design_h))
+            self.hbar.grid()
+            self.vbar.grid()
+        self._draw_layout()
+        self._refresh_mode()
 
     def _draw_layout(self):
         c = self.canvas
         c.delete("all")
-        c.create_text(830, 28, text="Grinding Room / Bundle Operation Flow", font=("Arial", 20, "bold"))
+        c.create_text(self.sx(950), self.sy(28), text="Grinding Room / Bundle Operation Flow", font=("Arial", int(20 * self.scale_factor), "bold"))
 
-        self._rect(120, 50, 770, 110, "Grinding Room", bold=True)
-        self._rect(40, 130, 110, 460, "Vemag / Brick", vertical=True)
-        self._rect(250, 145, 690, 185, "Blender Mixer Augers")
-        self._rect(695, 145, 790, 185, "Grinder")
-        self._rect(790, 50, 875, 185, "Product Dump", vertical=True)
-        self._rect(150, 215, 335, 315, "Denester")
-        self._rect(120, 395, 690, 455, "Multivac")
-        self._rect(690, 215, 840, 455, "")
-        self._rect(840, 215, 930, 455, "")
+        # Main stations
+        self._rect(120, 50, 760, 110, "Grinding Room", bold=True)
+        self._rect(50, 140, 120, 500, "Vemag / Brick", vertical=True)
+        self._rect(265, 165, 760, 210, "Blender Mixer Augers")
+        self._rect(760, 165, 865, 210, "Grinder")
+        self._rect(865, 50, 945, 210, "Product Dump", vertical=True)
+        self._rect(190, 260, 355, 380, "Denester")
+        self._rect(120, 430, 760, 485, "Multivac")
+        self._rect(760, 285, 900, 485, "")
+        self._rect(900, 285, 1010, 485, "")
 
-        self._rect(980, 535, 1220, 580, "Index Conveyor")
-        self._rect(1220, 515, 1410, 600, "Shanklin")
-        self._rect(1510, 515, 1760, 600, "Heat Tunnel")
-        self._rect(1760, 535, 1835, 580, "Pack")
-        self._rect(1510, 360, 1585, 410, "Pallet")
-        self._rect(1585, 380, 1775, 410, "Tape, conveyor")
+        # Bundle stations
+        self._rect(920, 575, 1145, 620, "Index Conveyor")
+        self._rect(1145, 555, 1360, 645, "Shanklin")
+        self._rect(1450, 555, 1735, 645, "Heat Tunnel")
+        self._rect(1735, 575, 1798, 620, "Pack")
+        self._rect(1450, 350, 1525, 405, "Pallet")
+        self._rect(1525, 370, 1760, 405, "Tape, conveyor")
 
-        # Normal tray path (red) - horizontal, up, then across between 4 and 5
-        c.create_line(110, 425, 840, 425, fill=RED, width=3)
-        c.create_line(840, 425, 840, 225, fill=RED, width=3)
-        c.create_line(840, 225, 1045, 225, fill=RED, width=3)
+        # Paths
+        # Regular trays (red): Vemag down -> horizontal -> up -> loop -> across to 5
+        self.canvas.create_line(self.sx(120), self.sy(310), self.sx(120), self.sy(455), fill=RED, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(120), self.sy(455), self.sx(800), self.sy(455), fill=RED, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(800), self.sy(455), self.sx(800), self.sy(295), fill=RED, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(800), self.sy(295), self.sx(885), self.sy(295), fill=RED, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(885), self.sy(295), self.sx(885), self.sy(395), fill=RED, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(885), self.sy(395), self.sx(980), self.sy(395), fill=RED, width=max(2, int(3 * self.scale_factor)))
 
-        # Case flow (blue)
-        c.create_line(1045, 225, 1045, 455, fill=CASE, width=3)
-        c.create_line(1045, 455, 1510, 455, fill=CASE, width=3)
-        c.create_line(1510, 455, 1510, 385, fill=CASE, width=3)
-        c.create_line(1510, 385, 1585, 385, fill=CASE, width=3)
+        # Regular cases (blue): from 5 area to 8 then tape/pallet
+        self.canvas.create_line(self.sx(980), self.sy(395), self.sx(980), self.sy(470), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(980), self.sy(470), self.sx(1180), self.sy(470), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(1180), self.sy(470), self.sx(1450), self.sy(470), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(1450), self.sy(470), self.sx(1450), self.sy(388), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(1450), self.sy(388), self.sx(1525), self.sy(388), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
 
-        # Bundle path
-        c.create_line(840, 455, 840, 560, fill=LINE, width=3)
-        c.create_line(840, 560, 980, 560, fill=LINE, width=3)
-        c.create_line(1410, 560, 1510, 560, fill=LINE, width=3)
-        c.create_line(1760, 560, 1835, 560, fill=LINE, width=3)
+        # Bundle trays (orange): split down to index then across to pack
+        self.canvas.create_line(self.sx(885), self.sy(395), self.sx(885), self.sy(620), fill=ORANGE, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(885), self.sy(620), self.sx(1735), self.sy(620), fill=ORANGE, width=max(2, int(3 * self.scale_factor)))
+
+        # Bundle boxes (purple): pack up and left to pallet/tape
+        self.canvas.create_line(self.sx(1735), self.sy(620), self.sx(1760), self.sy(620), fill=PURPLE, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(1760), self.sy(620), self.sx(1760), self.sy(350), fill=PURPLE, width=max(2, int(3 * self.scale_factor)))
+        self.canvas.create_line(self.sx(1760), self.sy(350), self.sx(1450), self.sy(350), fill=PURPLE, width=max(2, int(3 * self.scale_factor)))
 
         # Legend
-        c.create_rectangle(1260, 150, 1325, 175, fill=YELLOW, outline="")
-        c.create_text(1370, 163, text="Grinding labor", anchor="w", font=("Arial", 11))
-        c.create_rectangle(1260, 190, 1325, 215, fill=BLUE, outline="")
-        c.create_text(1415, 203, text="Dedicated bundle labor", anchor="w", font=("Arial", 11))
-        c.create_rectangle(1260, 230, 1325, 255, fill=ORANGE, outline="")
-        c.create_text(1450, 243, text="Grinding labor pulled into bundle tasks", anchor="w", font=("Arial", 11))
-        c.create_rectangle(1260, 270, 1325, 295, fill=TRAY, outline="")
-        c.create_text(1370, 283, text="Tray", anchor="w", font=("Arial", 11))
-        c.create_rectangle(1260, 310, 1325, 335, fill=CASE, outline="")
-        c.create_text(1395, 323, text="Full case (12 trays)", anchor="w", font=("Arial", 11))
+        legend_x = 1310
+        self._legend_box(legend_x, 150, YELLOW, "Grinding labor")
+        self._legend_box(legend_x, 190, BLUE, "Regular box path / dedicated bundle labor")
+        self._legend_box(legend_x, 230, ORANGE, "Bundle tray path / pulled labor")
+        self._legend_box(legend_x, 270, TRAY, "Tray")
+        self._legend_box(legend_x, 310, PURPLE, "Bundle box path")
 
-        # Grinding labor
-        self._emp("2", 155, 160, YELLOW)
-        self._emp("1", 745, 190, YELLOW)
-        self._emp("3", 330, 275, YELLOW)
-        self._emp("4", 860, 310, YELLOW)
-        self._emp("5", 1020, 310, YELLOW)
-        self._emp("6", 1005, 455, YELLOW)
-        self._emp("7", 1065, 455, YELLOW)
-        self._emp("8", 1140, 430, YELLOW)
+        # employees
+        self._emp("2", 170, 180, YELLOW)
+        self._emp("1", 810, 205, YELLOW)
+        self._emp("3", 340, 330, YELLOW)
+        self._emp("4", 905, 330, YELLOW)
+        self._emp("5", 1080, 330, YELLOW)
+        self._emp("6", 1060, 470, YELLOW)
+        self._emp("7", 1120, 470, YELLOW)
+        self._emp("8", 1210, 445, YELLOW)
 
-        # Pulled
-        self._emp("4", 900, 535, ORANGE, "4_orange")
-        self._emp("6", 970, 595, ORANGE, "6_orange")
-        self._emp("7", 1040, 655, ORANGE, "7_orange")
-        self._emp("8", 1430, 385, ORANGE, "8_orange")
+        self._emp("4", 830, 575, ORANGE, "4_orange")
+        self._emp("6", 1465, 385, ORANGE, "6_orange")
+        self._emp("5", 1700, 385, BLUE, "5_blue")
+        self._emp("6", 1180, 215, BLUE, "6_blue")
+        self._emp("4", 1160, 555, BLUE, "4_blue")
+        self._emp("3", 1790, 585, BLUE, "3_blue")
+        self._emp("2", 1790, 620, BLUE, "2_blue")
+        self._emp("1", 1710, 655, BLUE, "1_blue")
 
-        # Dedicated bundle
-        self._emp("6", 1210, 275, BLUE, "6_blue")
-        self._emp("4", 1185, 515, BLUE, "4_blue")
-        self._emp("5", 1740, 385, BLUE, "5_blue")
-        self._emp("3", 1830, 540, BLUE, "3_blue")
-        self._emp("2", 1830, 575, BLUE, "2_blue")
-        self._emp("1", 1750, 610, BLUE, "1_blue")
+    def _legend_box(self, x, y, color, text):
+        self.canvas.create_rectangle(self.sx(x), self.sy(y), self.sx(x + 70), self.sy(y + 28), fill=color, outline="")
+        self.canvas.create_text(self.sx(x + 105), self.sy(y + 14), text=text, anchor="w", font=("Arial", max(9, int(11 * self.scale_factor))))
 
     def _rect(self, x1, y1, x2, y2, label, vertical=False, bold=False):
-        self.canvas.create_rectangle(x1, y1, x2, y2, outline=LINE, width=2)
+        self.canvas.create_rectangle(self.sx(x1), self.sy(y1), self.sx(x2), self.sy(y2), outline=LINE, width=max(1, int(2 * self.scale_factor)))
         if label:
-            font = ("Arial", 16, "bold") if bold else ("Arial", 11)
+            font = ("Arial", max(9, int((16 if bold else 11) * self.scale_factor)), "bold" if bold else "normal")
             if vertical:
-                self.canvas.create_text((x1+x2)/2, (y1+y2)/2, text=label, angle=90, font=font)
+                self.canvas.create_text(self.sx((x1+x2)/2), self.sy((y1+y2)/2), text=label, angle=90, font=font)
             else:
-                self.canvas.create_text((x1+x2)/2, (y1+y2)/2, text=label, font=font)
+                self.canvas.create_text(self.sx((x1+x2)/2), self.sy((y1+y2)/2), text=label, font=font)
 
     def _emp(self, label, x, y, color, key=None):
         key = key or label
-        rect = self.canvas.create_rectangle(x, y, x+70, y+28, fill=color, outline="")
-        text = self.canvas.create_text(x+35, y+14, text=label, font=("Arial", 12))
+        rect = self.canvas.create_rectangle(self.sx(x), self.sy(y), self.sx(x + 78), self.sy(y + 30), fill=color, outline="")
+        text = self.canvas.create_text(self.sx(x + 39), self.sy(y + 15), text=label, font=("Arial", max(9, int(12 * self.scale_factor))))
         self.employee_items[key] = rect
         self.employee_labels[key] = text
 
     def _refresh_mode(self):
         bundle = self.mode.get() == "bundle"
-        for key in ["4_orange", "6_orange", "7_orange", "8_orange", "6_blue", "4_blue", "5_blue", "3_blue", "2_blue", "1_blue"]:
+        for key in ["4_orange", "6_orange", "6_blue", "4_blue", "5_blue", "3_blue", "2_blue", "1_blue"]:
             show = bundle
             self.canvas.itemconfigure(self.employee_items[key], state="normal" if show else "hidden")
             self.canvas.itemconfigure(self.employee_labels[key], state="normal" if (show and self.show_labels.get()) else "hidden")
         for key in ["1", "2", "3", "4", "5", "6", "7", "8"]:
-            self.canvas.itemconfigure(self.employee_labels[key], state="normal" if self.show_labels.get() else "hidden")
+            if key in self.employee_labels:
+                self.canvas.itemconfigure(self.employee_labels[key], state="normal" if self.show_labels.get() else "hidden")
         self.status.config(
-            text="Bundle mode: trays divert down to Index Conveyor; yellow 4,5,6,7,8 are no longer available for normal case flow."
+            text="Bundle mode: trays follow orange path, bundle boxes follow purple path."
             if bundle else
-            "Normal mode: trays move across the red path, up, then across between positions 4 and 5."
+            "Normal mode: trays follow red path, loop around 4, go across to 5, and every 12 trays create a blue case."
         )
 
     def start(self):
@@ -215,81 +270,93 @@ class SimApp:
         self.running = False
         self.elapsed_sim_sec = 0.0
         self.last_spawn_sec = 0.0
-        self.normal_tray_count = 0
-        self.case_count = 0
-        self.tray_total = 0
+        self.completed_changeovers = 0
         self.changeover_active = False
         self.changeover_end_sec = 0.0
-        self.completed_changeovers = 0
+        self.tray_total = 0
+        self.regular_case_total = 0
+        self.bundle_case_total = 0
+        self.regular_pack_buffer = 0
+        self.bundle_pack_buffer = 0
         for item in list(self.tray_items) + list(self.case_items):
             self.canvas.delete(item["id"])
-        self.tray_items = []
-        self.case_items = []
+        self.tray_items.clear()
+        self.case_items.clear()
         self._update_labels()
         self._refresh_mode()
 
     def _spawn_tray(self):
-        item = self.canvas.create_rectangle(108, 420, 118, 430, fill=TRAY, outline=TRAY)
-        self.tray_items.append({"id": item, "stage": "horizontal"})
+        item = self.canvas.create_rectangle(self.sx(112), self.sy(305), self.sx(124), self.sy(317), fill=TRAY, outline=TRAY)
+        self.tray_items.append({"id": item, "stage": "drop_vemag"})
 
-    def _spawn_case(self):
-        item = self.canvas.create_rectangle(1038, 218, 1052, 232, fill=CASE, outline=CASE)
-        self.case_items.append({"id": item, "stage": "normal"})
+    def _spawn_regular_case(self):
+        item = self.canvas.create_rectangle(self.sx(972), self.sy(388), self.sx(988), self.sy(404), fill=BLUE, outline=BLUE)
+        self.case_items.append({"id": item, "stage": "regular_down"})
 
     def _spawn_bundle_case(self):
-        item = self.canvas.create_rectangle(1760, 552, 1774, 566, fill=CASE, outline=CASE)
-        self.case_items.append({"id": item, "stage": "bundle"})
+        item = self.canvas.create_rectangle(self.sx(1752), self.sy(612), self.sx(1768), self.sy(628), fill=PURPLE, outline=PURPLE)
+        self.case_items.append({"id": item, "stage": "bundle_up"})
 
     def _move_trays(self, dt_real):
         remove = []
-        speed_px = 250 * dt_real
+        speed_px = 260 * self.scale_factor * dt_real
         for tray in self.tray_items:
             item = tray["id"]
             x1, y1, x2, y2 = self.canvas.coords(item)
 
             if self.mode.get() == "normal":
-                if tray["stage"] == "horizontal":
-                    if x2 < 840:
-                        self.canvas.move(item, speed_px, 0)
-                    else:
-                        tray["stage"] = "up"
-                elif tray["stage"] == "up":
-                    if y1 > 220:
-                        self.canvas.move(item, 0, -speed_px)
-                    else:
-                        tray["stage"] = "across_pack"
-                elif tray["stage"] == "across_pack":
-                    if x2 < 1045:
-                        self.canvas.move(item, speed_px, 0)
-                    else:
-                        remove.append(tray)
-                        self.tray_total += 1
-                        self.normal_tray_count += 1
-                        if self.normal_tray_count >= 12:
-                            self.normal_tray_count = 0
-                            self.case_count += 1
-                            self._spawn_case()
-            else:
-                if tray["stage"] == "horizontal":
-                    if x2 < 840:
-                        self.canvas.move(item, speed_px, 0)
-                    else:
-                        tray["stage"] = "down_to_bundle"
-                elif tray["stage"] == "down_to_bundle":
-                    if y2 < 560:
+                if tray["stage"] == "drop_vemag":
+                    if y2 < self.sy(455):
                         self.canvas.move(item, 0, speed_px)
                     else:
-                        tray["stage"] = "to_index"
-                elif tray["stage"] == "to_index":
-                    if x2 < 980:
+                        tray["stage"] = "horizontal"
+                elif tray["stage"] == "horizontal":
+                    if x2 < self.sx(800):
+                        self.canvas.move(item, speed_px, 0)
+                    else:
+                        tray["stage"] = "up_to_4"
+                elif tray["stage"] == "up_to_4":
+                    if y1 > self.sy(295):
+                        self.canvas.move(item, 0, -speed_px)
+                    else:
+                        tray["stage"] = "across_4_5"
+                elif tray["stage"] == "across_4_5":
+                    if x2 < self.sx(980):
                         self.canvas.move(item, speed_px, 0)
                     else:
                         remove.append(tray)
                         self.tray_total += 1
-                        self.normal_tray_count += 1
-                        if self.normal_tray_count >= 12:
-                            self.normal_tray_count = 0
-                            self.case_count += 1
+                        self.regular_pack_buffer += 1
+                        if self.regular_pack_buffer >= 12:
+                            self.regular_pack_buffer = 0
+                            self.regular_case_total += 1
+                            self._spawn_regular_case()
+            else:
+                if tray["stage"] == "drop_vemag":
+                    if y2 < self.sy(455):
+                        self.canvas.move(item, 0, speed_px)
+                    else:
+                        tray["stage"] = "horizontal"
+                elif tray["stage"] == "horizontal":
+                    if x2 < self.sx(885):
+                        self.canvas.move(item, speed_px, 0)
+                    else:
+                        tray["stage"] = "down_bundle"
+                elif tray["stage"] == "down_bundle":
+                    if y2 < self.sy(620):
+                        self.canvas.move(item, 0, speed_px)
+                    else:
+                        tray["stage"] = "bundle_across"
+                elif tray["stage"] == "bundle_across":
+                    if x2 < self.sx(1735):
+                        self.canvas.move(item, speed_px, 0)
+                    else:
+                        remove.append(tray)
+                        self.tray_total += 1
+                        self.bundle_pack_buffer += 1
+                        if self.bundle_pack_buffer >= 12:
+                            self.bundle_pack_buffer = 0
+                            self.bundle_case_total += 1
                             self._spawn_bundle_case()
 
         for tray in remove:
@@ -299,24 +366,38 @@ class SimApp:
 
     def _move_cases(self, dt_real):
         remove = []
-        speed_px = 180 * dt_real
+        speed_px = 190 * self.scale_factor * dt_real
         for case in self.case_items:
             item = case["id"]
             x1, y1, x2, y2 = self.canvas.coords(item)
-            if case["stage"] == "normal":
-                if y2 < 455:
+            if case["stage"] == "regular_down":
+                if y2 < self.sy(470):
                     self.canvas.move(item, 0, speed_px)
-                elif x2 < 1510:
+                else:
+                    case["stage"] = "regular_right"
+            elif case["stage"] == "regular_right":
+                if x2 < self.sx(1450):
                     self.canvas.move(item, speed_px, 0)
-                elif y1 > 385:
+                else:
+                    case["stage"] = "regular_up"
+            elif case["stage"] == "regular_up":
+                if y1 > self.sy(388):
                     self.canvas.move(item, 0, -speed_px)
-                elif x2 < 1585:
+                else:
+                    case["stage"] = "regular_pallet"
+            elif case["stage"] == "regular_pallet":
+                if x2 < self.sx(1525):
                     self.canvas.move(item, speed_px, 0)
                 else:
                     remove.append(case)
-            elif case["stage"] == "bundle":
-                if x2 < 1835:
-                    self.canvas.move(item, speed_px, 0)
+            elif case["stage"] == "bundle_up":
+                if y1 > self.sy(350):
+                    self.canvas.move(item, 0, -speed_px)
+                else:
+                    case["stage"] = "bundle_left"
+            elif case["stage"] == "bundle_left":
+                if x1 > self.sx(1450):
+                    self.canvas.move(item, -speed_px, 0)
                 else:
                     remove.append(case)
 
@@ -342,7 +423,7 @@ class SimApp:
             self.status.config(text="Changeover active: 7 simulated minutes.")
         if self.changeover_active and self.elapsed_sim_sec >= self.changeover_end_sec:
             self.changeover_active = False
-            self.status.config(text="Changeover complete. Production resumed.")
+            self._refresh_mode()
 
     def _update_labels(self):
         self.lbl_tpm.config(text=f"{self.trays_per_min.get():.1f}")
@@ -350,7 +431,8 @@ class SimApp:
         self.lbl_scale.config(text=f"{self.time_scale.get():.0f}x")
         self.kpis["Minutes Simulated"].config(text=f"{self.elapsed_sim_sec / 60:.1f}")
         self.kpis["Trays Produced"].config(text=str(self.tray_total))
-        self.kpis["Cases Produced"].config(text=str(self.case_count))
+        self.kpis["Regular Cases"].config(text=str(self.regular_case_total))
+        self.kpis["Bundle Cases"].config(text=str(self.bundle_case_total))
         self.kpis["Completed Changeovers"].config(text=str(self.completed_changeovers))
         self.kpis["Backlog"].config(text=str(len(self.tray_items)))
 
@@ -374,10 +456,12 @@ class SimApp:
         self._update_labels()
         self.root.after(50, self._tick)
 
+
 def main():
     root = tk.Tk()
     app = SimApp(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
