@@ -10,6 +10,7 @@ TRAY = "#111111"
 PURPLE = "#8e44ad"
 RED = "#cc2f2f"
 
+
 class SimApp:
     def __init__(self, root):
         self.root = root
@@ -120,8 +121,11 @@ class SimApp:
         if self.fit_to_window.get():
             self._redraw_scaled()
 
-    def sx(self, x): return x * self.scale_factor
-    def sy(self, y): return y * self.scale_factor
+    def sx(self, x):
+        return x * self.scale_factor
+
+    def sy(self, y):
+        return y * self.scale_factor
 
     def _redraw_scaled(self):
         if self.fit_to_window.get():
@@ -221,7 +225,8 @@ class SimApp:
             else:
                 self.canvas.create_text(self.sx((x1 + x2) / 2), self.sy((y1 + y2) / 2), text=label, font=font)
 
-    def _emp(self, label, x, y, color, key):
+    def _emp(self, label, x, y, color, key=None):
+        key = key or label
         rect = self.canvas.create_rectangle(self.sx(x), self.sy(y), self.sx(x + 68), self.sy(y + 28), fill=color, outline="")
         text = self.canvas.create_text(self.sx(x + 34), self.sy(y + 14), text=label, font=("Arial", max(9, int(12 * self.scale_factor))))
         self.employee_items[key] = rect
@@ -363,6 +368,7 @@ class SimApp:
         for case in self.case_items:
             item = case["id"]
             x1, y1, x2, y2 = self.canvas.coords(item)
+
             if case["stage"] == "regular_down":
                 if y2 < self.sy(420):
                     self.canvas.move(item, 0, speed_px)
@@ -383,6 +389,7 @@ class SimApp:
                     self.canvas.move(item, speed_px, 0)
                 else:
                     remove.append(case)
+
             elif case["stage"] == "bundle_right":
                 if x2 < self.sx(1660):
                     self.canvas.move(item, speed_px, 0)
@@ -453,10 +460,12 @@ class SimApp:
         self._update_labels()
         self.root.after(50, self._tick)
 
+
 def main():
     root = tk.Tk()
     app = SimApp(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
