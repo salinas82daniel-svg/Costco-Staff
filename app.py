@@ -13,7 +13,7 @@ RED = "#cc2f2f"
 class SimApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Grinding / Bundle Flow Simulator v2")
+        self.root.title("Grinding / Bundle Flow Simulator v3")
         self.root.geometry("1700x930")
         self.root.configure(bg=BG)
 
@@ -83,7 +83,7 @@ class SimApp:
         ttk.Button(controls, text="Reset", command=self.reset).pack(side="left", padx=4)
         ttk.Checkbutton(controls, text="Show Labels", variable=self.show_labels, command=self._refresh_mode).pack(side="left", padx=8)
 
-        self.status = ttk.Label(controls, text="Ready. Simulates 60 minutes with optional 7-minute changeovers.")
+        self.status = ttk.Label(controls, text="Ready. Normal mode now sends trays up and across between positions 4 and 5.")
         self.status.pack(side="left", padx=16)
 
         kpi_row = tk.Frame(self.root, bg=BG)
@@ -122,19 +122,24 @@ class SimApp:
         self._rect(1510, 360, 1585, 410, "Pallet")
         self._rect(1585, 380, 1775, 410, "Tape, conveyor")
 
+        # Normal tray path (red) - horizontal, up, then across between 4 and 5
         c.create_line(110, 425, 840, 425, fill=RED, width=3)
         c.create_line(840, 425, 840, 225, fill=RED, width=3)
-        c.create_line(840, 225, 930, 225, fill=RED, width=3)
-        c.create_line(930, 225, 930, 455, fill=CASE, width=3)
-        c.create_line(930, 455, 1510, 455, fill=CASE, width=3)
+        c.create_line(840, 225, 1045, 225, fill=RED, width=3)
+
+        # Case flow (blue)
+        c.create_line(1045, 225, 1045, 455, fill=CASE, width=3)
+        c.create_line(1045, 455, 1510, 455, fill=CASE, width=3)
         c.create_line(1510, 455, 1510, 385, fill=CASE, width=3)
         c.create_line(1510, 385, 1585, 385, fill=CASE, width=3)
 
+        # Bundle path
         c.create_line(840, 455, 840, 560, fill=LINE, width=3)
         c.create_line(840, 560, 980, 560, fill=LINE, width=3)
         c.create_line(1410, 560, 1510, 560, fill=LINE, width=3)
         c.create_line(1760, 560, 1835, 560, fill=LINE, width=3)
 
+        # Legend
         c.create_rectangle(1260, 150, 1325, 175, fill=YELLOW, outline="")
         c.create_text(1370, 163, text="Grinding labor", anchor="w", font=("Arial", 11))
         c.create_rectangle(1260, 190, 1325, 215, fill=BLUE, outline="")
@@ -146,6 +151,7 @@ class SimApp:
         c.create_rectangle(1260, 310, 1325, 335, fill=CASE, outline="")
         c.create_text(1395, 323, text="Full case (12 trays)", anchor="w", font=("Arial", 11))
 
+        # Grinding labor
         self._emp("2", 155, 160, YELLOW)
         self._emp("1", 745, 190, YELLOW)
         self._emp("3", 330, 275, YELLOW)
@@ -155,11 +161,13 @@ class SimApp:
         self._emp("7", 1065, 455, YELLOW)
         self._emp("8", 1140, 430, YELLOW)
 
+        # Pulled
         self._emp("4", 900, 535, ORANGE, "4_orange")
         self._emp("6", 970, 595, ORANGE, "6_orange")
         self._emp("7", 1040, 655, ORANGE, "7_orange")
         self._emp("8", 1430, 385, ORANGE, "8_orange")
 
+        # Dedicated bundle
         self._emp("6", 1210, 275, BLUE, "6_blue")
         self._emp("4", 1185, 515, BLUE, "4_blue")
         self._emp("5", 1740, 385, BLUE, "5_blue")
@@ -178,10 +186,10 @@ class SimApp:
 
     def _emp(self, label, x, y, color, key=None):
         key = key or label
-        r = self.canvas.create_rectangle(x, y, x+70, y+28, fill=color, outline="")
-        t = self.canvas.create_text(x+35, y+14, text=label, font=("Arial", 12))
-        self.employee_items[key] = r
-        self.employee_labels[key] = t
+        rect = self.canvas.create_rectangle(x, y, x+70, y+28, fill=color, outline="")
+        text = self.canvas.create_text(x+35, y+14, text=label, font=("Arial", 12))
+        self.employee_items[key] = rect
+        self.employee_labels[key] = text
 
     def _refresh_mode(self):
         bundle = self.mode.get() == "bundle"
@@ -194,7 +202,7 @@ class SimApp:
         self.status.config(
             text="Bundle mode: trays divert down to Index Conveyor; yellow 4,5,6,7,8 are no longer available for normal case flow."
             if bundle else
-            "Normal mode: trays run up to positions 4 and 5; every 12 trays create one case."
+            "Normal mode: trays move across the red path, up, then across between positions 4 and 5."
         )
 
     def start(self):
@@ -225,7 +233,7 @@ class SimApp:
         self.tray_items.append({"id": item, "stage": "horizontal"})
 
     def _spawn_case(self):
-        item = self.canvas.create_rectangle(930, 447, 944, 461, fill=CASE, outline=CASE)
+        item = self.canvas.create_rectangle(1038, 218, 1052, 232, fill=CASE, outline=CASE)
         self.case_items.append({"id": item, "stage": "normal"})
 
     def _spawn_bundle_case(self):
@@ -238,6 +246,7 @@ class SimApp:
         for tray in self.tray_items:
             item = tray["id"]
             x1, y1, x2, y2 = self.canvas.coords(item)
+
             if self.mode.get() == "normal":
                 if tray["stage"] == "horizontal":
                     if x2 < 840:
@@ -245,8 +254,13 @@ class SimApp:
                     else:
                         tray["stage"] = "up"
                 elif tray["stage"] == "up":
-                    if y1 > 310:
+                    if y1 > 220:
                         self.canvas.move(item, 0, -speed_px)
+                    else:
+                        tray["stage"] = "across_pack"
+                elif tray["stage"] == "across_pack":
+                    if x2 < 1045:
+                        self.canvas.move(item, speed_px, 0)
                     else:
                         remove.append(tray)
                         self.tray_total += 1
@@ -277,6 +291,7 @@ class SimApp:
                             self.normal_tray_count = 0
                             self.case_count += 1
                             self._spawn_bundle_case()
+
         for tray in remove:
             if tray in self.tray_items:
                 self.canvas.delete(tray["id"])
@@ -289,7 +304,9 @@ class SimApp:
             item = case["id"]
             x1, y1, x2, y2 = self.canvas.coords(item)
             if case["stage"] == "normal":
-                if x2 < 1510:
+                if y2 < 455:
+                    self.canvas.move(item, 0, speed_px)
+                elif x2 < 1510:
                     self.canvas.move(item, speed_px, 0)
                 elif y1 > 385:
                     self.canvas.move(item, 0, -speed_px)
@@ -302,6 +319,7 @@ class SimApp:
                     self.canvas.move(item, speed_px, 0)
                 else:
                     remove.append(case)
+
         for case in remove:
             if case in self.case_items:
                 self.canvas.delete(case["id"])
