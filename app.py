@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+import math
 
 BG = "#f4f4f4"
 LINE = "#222222"
@@ -10,12 +11,30 @@ TRAY = "#111111"
 PURPLE = "#8e44ad"
 RED = "#cc2f2f"
 
+WINDOW_W = 1500
+WINDOW_H = 920
+
+# Design-space size (based on your diagram)
+DESIGN_W = 1900
+DESIGN_H = 820
+
+# Always fit to window
+SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 180) / DESIGN_H)
+
+
+def sx(x):
+    return x * SCALE
+
+
+def sy(y):
+    return y * SCALE
+
 
 class SimApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Grinding / Bundle Flow Simulator v5")
-        self.root.geometry("1500x920")
+        self.root.title("Grinding / Bundle Flow Simulator v6")
+        self.root.geometry(f"{WINDOW_W}x{WINDOW_H}")
         self.root.configure(bg=BG)
 
         self.mode = tk.StringVar(value="normal")
@@ -24,7 +43,6 @@ class SimApp:
         self.sim_minutes = tk.DoubleVar(value=60.0)
         self.time_scale = tk.DoubleVar(value=120.0)
         self.show_labels = tk.BooleanVar(value=True)
-        self.fit_to_window = tk.BooleanVar(value=False)
 
         self.running = False
         self.elapsed_sim_sec = 0.0
@@ -45,10 +63,6 @@ class SimApp:
         self.employee_labels = {}
         self.kpis = {}
 
-        self.design_w = 1900
-        self.design_h = 820
-        self.scale_factor = 1.0
-
         self._build_ui()
         self._draw_layout()
         self._refresh_mode()
@@ -64,7 +78,15 @@ class SimApp:
         ttk.Radiobutton(top, text="Bundle Mode", variable=self.mode, value="bundle", command=self._refresh_mode).pack(side="left", padx=(0, 10))
 
         ttk.Label(top, text="Trays/min").pack(side="left")
-        ttk.Scale(top, from_=10, to=90, variable=self.trays_per_min, orient="horizontal", length=180, command=lambda _=None: self._update_labels()).pack(side="left", padx=4)
+        ttk.Scale(
+            top,
+            from_=10,
+            to=90,
+            variable=self.trays_per_min,
+            orient="horizontal",
+            length=180,
+            command=lambda _=None: self._update_labels(),
+        ).pack(side="left", padx=4)
         self.lbl_tpm = ttk.Label(top, text="")
         self.lbl_tpm.pack(side="left", padx=(0, 10))
 
@@ -75,7 +97,15 @@ class SimApp:
         ttk.Spinbox(top, from_=10, to=240, width=6, textvariable=self.sim_minutes, command=self._update_labels).pack(side="left", padx=4)
 
         ttk.Label(top, text="Speed-up").pack(side="left", padx=(8, 0))
-        ttk.Scale(top, from_=30, to=300, variable=self.time_scale, orient="horizontal", length=120, command=lambda _=None: self._update_labels()).pack(side="left", padx=4)
+        ttk.Scale(
+            top,
+            from_=30,
+            to=300,
+            variable=self.time_scale,
+            orient="horizontal",
+            length=120,
+            command=lambda _=None: self._update_labels(),
+        ).pack(side="left", padx=4)
         self.lbl_scale = ttk.Label(top, text="")
         self.lbl_scale.pack(side="left", padx=(0, 8))
 
@@ -86,13 +116,16 @@ class SimApp:
         ttk.Button(controls, text="Pause", command=self.pause).pack(side="left", padx=4)
         ttk.Button(controls, text="Reset", command=self.reset).pack(side="left", padx=4)
         ttk.Checkbutton(controls, text="Show Labels", variable=self.show_labels, command=self._refresh_mode).pack(side="left", padx=6)
-        ttk.Checkbutton(controls, text="Fit to window", variable=self.fit_to_window, command=self._redraw_scaled).pack(side="left", padx=6)
 
-        self.status = ttk.Label(controls, text="Ready. Normal: red trays become blue cases. Bundle: orange trays become purple boxes.")
+        self.status = ttk.Label(
+            controls,
+            text="Ready. Normal: red trays become blue regular boxes. Bundle: orange trays become purple bundle boxes.",
+        )
         self.status.pack(side="left", padx=12)
 
         kpi_row = tk.Frame(self.root, bg=BG)
         kpi_row.pack(fill="x", padx=8, pady=(0, 6))
+
         for label in ["Minutes Simulated", "Trays Produced", "Regular Cases", "Bundle Cases", "Completed Changeovers", "Backlog"]:
             box = tk.Frame(kpi_row, bg="white", highlightbackground="#bbbbbb", highlightthickness=1)
             box.pack(side="left", padx=4)
@@ -101,53 +134,22 @@ class SimApp:
             val.pack(padx=10, pady=(0, 6))
             self.kpis[label] = val
 
-        canvas_wrap = tk.Frame(self.root, bg=BG)
-        canvas_wrap.pack(fill="both", expand=True, padx=8, pady=6)
-
-        self.canvas = tk.Canvas(canvas_wrap, width=1420, height=720, bg=BG, highlightthickness=0, scrollregion=(0, 0, self.design_w, self.design_h))
-        self.hbar = ttk.Scrollbar(canvas_wrap, orient="horizontal", command=self.canvas.xview)
-        self.vbar = ttk.Scrollbar(canvas_wrap, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(xscrollcommand=self.hbar.set, yscrollcommand=self.vbar.set)
-
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.vbar.grid(row=0, column=1, sticky="ns")
-        self.hbar.grid(row=1, column=0, sticky="ew")
-        canvas_wrap.rowconfigure(0, weight=1)
-        canvas_wrap.columnconfigure(0, weight=1)
-
-        self.root.bind("<Configure>", self._on_resize)
-
-    def _on_resize(self, event):
-        if self.fit_to_window.get():
-            self._redraw_scaled()
-
-    def sx(self, x):
-        return x * self.scale_factor
-
-    def sy(self, y):
-        return y * self.scale_factor
-
-    def _redraw_scaled(self):
-        if self.fit_to_window.get():
-            w = max(1000, self.canvas.winfo_width())
-            h = max(500, self.canvas.winfo_height())
-            self.scale_factor = min(w / self.design_w, h / self.design_h)
-            self.canvas.configure(scrollregion=(0, 0, self.design_w * self.scale_factor, self.design_h * self.scale_factor))
-            self.hbar.grid_remove()
-            self.vbar.grid_remove()
-        else:
-            self.scale_factor = 1.0
-            self.canvas.configure(scrollregion=(0, 0, self.design_w, self.design_h))
-            self.hbar.grid()
-            self.vbar.grid()
-        self._draw_layout()
-        self._refresh_mode()
+        self.canvas = tk.Canvas(
+            self.root,
+            width=int(DESIGN_W * SCALE),
+            height=int(DESIGN_H * SCALE),
+            bg=BG,
+            highlightthickness=0,
+        )
+        self.canvas.pack(padx=8, pady=6)
 
     def _draw_layout(self):
         c = self.canvas
         c.delete("all")
-        c.create_text(self.sx(950), self.sy(28), text="Grinding Room / Bundle Operation Flow", font=("Arial", max(12, int(20 * self.scale_factor)), "bold"))
 
+        c.create_text(sx(950), sy(28), text="Grinding Room / Bundle Operation Flow", font=("Arial", max(12, int(20 * SCALE)), "bold"))
+
+        # Stations
         self._rect(80, 0, 650, 55, "Grinding Room", bold=True)
         self._rect(30, 95, 80, 490, "Vemag / Brick", vertical=True)
         self._rect(190, 95, 500, 135, "Blender Mixer Augers")
@@ -166,25 +168,19 @@ class SimApp:
         self._rect(1375, 320, 1650, 350, "Tape, conveyor")
 
         # Paths
-        self.canvas.create_line(self.sx(80), self.sy(300), self.sx(80), self.sy(420), fill=RED, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(80), self.sy(420), self.sx(620), self.sy(420), fill=RED, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(620), self.sy(420), self.sx(620), self.sy(195), fill=RED, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(620), self.sy(195), self.sx(685), self.sy(195), fill=RED, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(685), self.sy(195), self.sx(685), self.sy(275), fill=RED, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(685), self.sy(275), self.sx(715), self.sy(275), fill=RED, width=max(2, int(3 * self.scale_factor)))
+        # Regular tray path (red)
+        self._path_line([(80, 300), (80, 420), (620, 420), (620, 195), (685, 195), (685, 275), (715, 275)], RED)
 
-        self.canvas.create_line(self.sx(715), self.sy(275), self.sx(715), self.sy(420), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(715), self.sy(420), self.sx(1300), self.sy(420), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(1300), self.sy(420), self.sx(1300), self.sy(325), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(1300), self.sy(325), self.sx(1375), self.sy(325), fill=BLUE, width=max(2, int(3 * self.scale_factor)))
+        # Regular box path (blue)
+        self._path_line([(715, 275), (715, 420), (1300, 420), (1300, 325), (1375, 325)], BLUE)
 
-        self.canvas.create_line(self.sx(715), self.sy(275), self.sx(715), self.sy(615), fill=ORANGE, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(715), self.sy(615), self.sx(1605), self.sy(615), fill=ORANGE, width=max(2, int(3 * self.scale_factor)))
+        # Bundle tray path (orange)
+        self._path_line([(715, 275), (715, 615), (1605, 615)], ORANGE)
 
-        self.canvas.create_line(self.sx(1605), self.sy(615), self.sx(1660), self.sy(615), fill=PURPLE, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(1660), self.sy(615), self.sx(1660), self.sy(300), fill=PURPLE, width=max(2, int(3 * self.scale_factor)))
-        self.canvas.create_line(self.sx(1660), self.sy(300), self.sx(1300), self.sy(300), fill=PURPLE, width=max(2, int(3 * self.scale_factor)))
+        # Bundle box path (purple)
+        self._path_line([(1605, 615), (1660, 615), (1660, 300), (1300, 300)], PURPLE)
 
+        # Legend
         legend_x = 1420
         self._legend_box(legend_x, 120, YELLOW, "Grinding labor")
         self._legend_box(legend_x, 160, ORANGE, "Bundle labor / bundle trays")
@@ -192,52 +188,64 @@ class SimApp:
         self._legend_box(legend_x, 240, BLUE, "Regular boxes")
         self._legend_box(legend_x, 280, PURPLE, "Bundle boxes")
 
-        self._emp("2", 85, 110, YELLOW)
-        self._emp("1", 505, 135, YELLOW)
-        self._emp("3", 315, 225, YELLOW)
+        # Normal labor
+        self._emp("2", 85, 110, YELLOW, "2")
+        self._emp("1", 505, 135, YELLOW, "1")
+        self._emp("3", 315, 225, YELLOW, "3")
         self._emp("4", 640, 255, YELLOW, "4")
         self._emp("5", 700, 255, YELLOW, "5")
         self._emp("6", 705, 430, YELLOW, "6")
         self._emp("7", 760, 430, YELLOW, "7")
         self._emp("8", 1210, 410, YELLOW, "8")
 
-        self._emp("4", 720, 560, ORANGE, "4_orange")
-        self._emp("5", 720, 610, ORANGE, "5_orange")
-        self._emp("6", 760, 665, ORANGE, "6_orange")
-        self._emp("7", 760, 250, ORANGE, "7_orange")
+        # Bundle moved workers (keep yellow per your request)
+        self._emp("4", 720, 560, YELLOW, "4_orange")
+        self._emp("5", 720, 610, YELLOW, "5_orange")
+        self._emp("6", 760, 665, YELLOW, "6_orange")
+        self._emp("7", 760, 250, YELLOW, "7_orange")
         self._note("Box Maker Costco", 835, 250, key="7_note")
 
+        # Bundle-side workers
         self._emp("3", 1665, 560, BLUE, "3_blue")
         self._emp("2", 1665, 595, BLUE, "2_blue")
         self._emp("1", 1665, 630, BLUE, "1_blue")
-        self._emp("5", 1545, 320, BLUE, "5_blue")
+
+        # Blue employee #5 in front of Shanklin
+        self._emp("5", 995, 540, BLUE, "5_blue")
+
+    def _path_line(self, pts, color):
+        coords = []
+        for x, y in pts:
+            coords.extend([sx(x), sy(y)])
+        self.canvas.create_line(*coords, fill=color, width=max(2, int(3 * SCALE)))
 
     def _legend_box(self, x, y, color, text):
-        self.canvas.create_rectangle(self.sx(x), self.sy(y), self.sx(x + 70), self.sy(y + 26), fill=color, outline="")
-        self.canvas.create_text(self.sx(x + 95), self.sy(y + 13), text=text, anchor="w", font=("Arial", max(9, int(11 * self.scale_factor))))
+        self.canvas.create_rectangle(sx(x), sy(y), sx(x + 70), sy(y + 26), fill=color, outline="")
+        self.canvas.create_text(sx(x + 95), sy(y + 13), text=text, anchor="w", font=("Arial", max(9, int(11 * SCALE))))
 
     def _rect(self, x1, y1, x2, y2, label, vertical=False, bold=False):
-        self.canvas.create_rectangle(self.sx(x1), self.sy(y1), self.sx(x2), self.sy(y2), outline=LINE, width=max(1, int(2 * self.scale_factor)))
+        self.canvas.create_rectangle(sx(x1), sy(y1), sx(x2), sy(y2), outline=LINE, width=max(1, int(2 * SCALE)))
         if label:
-            font = ("Arial", max(9, int((16 if bold else 11) * self.scale_factor)), "bold" if bold else "normal")
+            font = ("Arial", max(9, int((16 if bold else 11) * SCALE)), "bold" if bold else "normal")
             if vertical:
-                self.canvas.create_text(self.sx((x1 + x2) / 2), self.sy((y1 + y2) / 2), text=label, angle=90, font=font)
+                self.canvas.create_text(sx((x1 + x2) / 2), sy((y1 + y2) / 2), text=label, angle=90, font=font)
             else:
-                self.canvas.create_text(self.sx((x1 + x2) / 2), self.sy((y1 + y2) / 2), text=label, font=font)
+                self.canvas.create_text(sx((x1 + x2) / 2), sy((y1 + y2) / 2), text=label, font=font)
 
     def _emp(self, label, x, y, color, key=None):
         key = key or label
-        rect = self.canvas.create_rectangle(self.sx(x), self.sy(y), self.sx(x + 68), self.sy(y + 28), fill=color, outline="")
-        text = self.canvas.create_text(self.sx(x + 34), self.sy(y + 14), text=label, font=("Arial", max(9, int(12 * self.scale_factor))))
+        rect = self.canvas.create_rectangle(sx(x), sy(y), sx(x + 68), sy(y + 28), fill=color, outline="")
+        text = self.canvas.create_text(sx(x + 34), sy(y + 14), text=label, font=("Arial", max(9, int(12 * SCALE))))
         self.employee_items[key] = rect
         self.employee_labels[key] = text
 
     def _note(self, text, x, y, key):
-        self.employee_labels[key] = self.canvas.create_text(self.sx(x), self.sy(y), text=text, anchor="w", font=("Arial", max(8, int(10 * self.scale_factor))))
+        self.employee_labels[key] = self.canvas.create_text(sx(x), sy(y), text=text, anchor="w", font=("Arial", max(8, int(10 * SCALE))))
 
     def _refresh_mode(self):
         bundle = self.mode.get() == "bundle"
         moved = ["4_orange", "5_orange", "6_orange", "7_orange", "7_note", "3_blue", "2_blue", "1_blue", "5_blue"]
+
         for key in moved:
             if key in self.employee_items:
                 self.canvas.itemconfigure(self.employee_items[key], state="normal" if bundle else "hidden")
@@ -257,9 +265,9 @@ class SimApp:
             self.canvas.itemconfigure(self.employee_labels[key], state="normal" if self.show_labels.get() else "hidden")
 
         self.status.config(
-            text="Bundle mode: 4 and 5 move to first two orange squares, 6 moves to the lower orange square, 7 becomes Box Maker Costco."
-            if bundle else
-            "Normal mode: regular trays end between 4 and 5, then become regular boxes."
+            text="Bundle mode: 4 and 5 move to first two yellow squares, 6 moves to the lower yellow square, 7 becomes Box Maker Costco."
+            if bundle
+            else "Normal mode: regular trays follow the red path and stop between 4 and 5, then become regular boxes."
         )
 
     def start(self):
@@ -280,82 +288,111 @@ class SimApp:
         self.bundle_case_total = 0
         self.regular_pack_buffer = 0
         self.bundle_pack_buffer = 0
+
         for item in list(self.tray_items) + list(self.case_items):
             self.canvas.delete(item["id"])
         self.tray_items.clear()
         self.case_items.clear()
+
         self._update_labels()
         self._refresh_mode()
 
     def _spawn_tray(self):
-        item = self.canvas.create_rectangle(self.sx(74), self.sy(300), self.sx(86), self.sy(312), fill=TRAY, outline=TRAY)
-        self.tray_items.append({"id": item, "stage": "drop_vemag"})
+        size = max(6, int(10 * SCALE))
+        x = sx(74)
+        y = sy(300)
+        item = self.canvas.create_rectangle(x, y, x + size, y + size, fill=TRAY, outline=TRAY)
+
+        path = [
+            (80, 420),
+            (620, 420),
+            (620, 195),
+            (685, 195),
+            (685, 275),
+            (715, 275),
+        ]
+        self.tray_items.append({"id": item, "path": path, "idx": 0, "bundle": False})
 
     def _spawn_regular_case(self):
-        item = self.canvas.create_rectangle(self.sx(707), self.sy(268), self.sx(723), self.sy(284), fill=BLUE, outline=BLUE)
-        self.case_items.append({"id": item, "stage": "regular_down"})
+        size = max(8, int(12 * SCALE))
+        x = sx(707)
+        y = sy(268)
+        item = self.canvas.create_rectangle(x, y, x + size, y + size, fill=BLUE, outline=BLUE)
+
+        path = [
+            (715, 420),
+            (1300, 420),
+            (1300, 325),
+            (1375, 325),
+        ]
+        self.case_items.append({"id": item, "path": path, "idx": 0})
 
     def _spawn_bundle_case(self):
-        item = self.canvas.create_rectangle(self.sx(1600), self.sy(607), self.sx(1616), self.sy(623), fill=PURPLE, outline=PURPLE)
-        self.case_items.append({"id": item, "stage": "bundle_right"})
+        size = max(8, int(12 * SCALE))
+        x = sx(1600)
+        y = sy(607)
+        item = self.canvas.create_rectangle(x, y, x + size, y + size, fill=PURPLE, outline=PURPLE)
+
+        path = [
+            (1660, 615),
+            (1660, 300),
+            (1300, 300),
+        ]
+        self.case_items.append({"id": item, "path": path, "idx": 0})
+
+    def _move_item_along_path(self, item_id, path_state, speed_px):
+        coords = self.canvas.coords(item_id)
+        x1, y1, x2, y2 = coords
+        cx = (x1 + x2) / 2
+        cy = (y1 + y2) / 2
+
+        if path_state["idx"] >= len(path_state["path"]):
+            return True
+
+        tx, ty = path_state["path"][path_state["idx"]]
+        tx = sx(tx)
+        ty = sy(ty)
+
+        dx = tx - cx
+        dy = ty - cy
+        dist = math.hypot(dx, dy)
+
+        if dist <= speed_px:
+            self.canvas.move(item_id, dx, dy)
+            path_state["idx"] += 1
+        else:
+            self.canvas.move(item_id, speed_px * dx / dist, speed_px * dy / dist)
+
+        return path_state["idx"] >= len(path_state["path"])
 
     def _move_trays(self, dt_real):
         remove = []
-        speed_px = 260 * self.scale_factor * dt_real
-        for tray in self.tray_items:
-            item = tray["id"]
-            x1, y1, x2, y2 = self.canvas.coords(item)
+        speed_px = 260 * SCALE * dt_real
 
-            if tray["stage"] == "drop_vemag":
-                if y2 < self.sy(420):
-                    self.canvas.move(item, 0, speed_px)
-                else:
-                    tray["stage"] = "horizontal"
-            elif tray["stage"] == "horizontal":
-                if x2 < self.sx(620):
-                    self.canvas.move(item, speed_px, 0)
-                else:
-                    tray["stage"] = "up_to_pack"
-            elif tray["stage"] == "up_to_pack":
-                if y1 > self.sy(195):
-                    self.canvas.move(item, 0, -speed_px)
-                else:
-                    tray["stage"] = "down_loop"
-            elif tray["stage"] == "down_loop":
-                if y2 < self.sy(275):
-                    self.canvas.move(item, 0, speed_px)
-                else:
-                    tray["stage"] = "decision_point"
-            elif tray["stage"] == "decision_point":
-                if x2 < self.sx(715):
-                    self.canvas.move(item, speed_px, 0)
-                else:
-                    if self.mode.get() == "normal":
-                        remove.append(tray)
-                        self.tray_total += 1
-                        self.regular_pack_buffer += 1
-                        if self.regular_pack_buffer >= 12:
-                            self.regular_pack_buffer = 0
-                            self.regular_case_total += 1
-                            self._spawn_regular_case()
-                    else:
-                        tray["stage"] = "down_bundle"
-            elif tray["stage"] == "down_bundle":
-                if y2 < self.sy(615):
-                    self.canvas.move(item, 0, speed_px)
-                else:
-                    tray["stage"] = "bundle_across"
-            elif tray["stage"] == "bundle_across":
-                if x2 < self.sx(1605):
-                    self.canvas.move(item, speed_px, 0)
-                else:
+        for tray in self.tray_items:
+            done = self._move_item_along_path(tray["id"], tray, speed_px)
+            if done:
+                if self.mode.get() == "normal" and not tray["bundle"]:
                     remove.append(tray)
                     self.tray_total += 1
-                    self.bundle_pack_buffer += 1
-                    if self.bundle_pack_buffer >= 12:
-                        self.bundle_pack_buffer = 0
-                        self.bundle_case_total += 1
-                        self._spawn_bundle_case()
+                    self.regular_pack_buffer += 1
+                    if self.regular_pack_buffer >= 12:
+                        self.regular_pack_buffer = 0
+                        self.regular_case_total += 1
+                        self._spawn_regular_case()
+                else:
+                    if not tray["bundle"]:
+                        tray["bundle"] = True
+                        tray["path"] = [(715, 615), (1605, 615)]
+                        tray["idx"] = 0
+                    else:
+                        remove.append(tray)
+                        self.tray_total += 1
+                        self.bundle_pack_buffer += 1
+                        if self.bundle_pack_buffer >= 12:
+                            self.bundle_pack_buffer = 0
+                            self.bundle_case_total += 1
+                            self._spawn_bundle_case()
 
         for tray in remove:
             if tray in self.tray_items:
@@ -364,47 +401,12 @@ class SimApp:
 
     def _move_cases(self, dt_real):
         remove = []
-        speed_px = 190 * self.scale_factor * dt_real
+        speed_px = 190 * SCALE * dt_real
+
         for case in self.case_items:
-            item = case["id"]
-            x1, y1, x2, y2 = self.canvas.coords(item)
-
-            if case["stage"] == "regular_down":
-                if y2 < self.sy(420):
-                    self.canvas.move(item, 0, speed_px)
-                else:
-                    case["stage"] = "regular_right"
-            elif case["stage"] == "regular_right":
-                if x2 < self.sx(1300):
-                    self.canvas.move(item, speed_px, 0)
-                else:
-                    case["stage"] = "regular_up"
-            elif case["stage"] == "regular_up":
-                if y1 > self.sy(325):
-                    self.canvas.move(item, 0, -speed_px)
-                else:
-                    case["stage"] = "regular_pallet"
-            elif case["stage"] == "regular_pallet":
-                if x2 < self.sx(1375):
-                    self.canvas.move(item, speed_px, 0)
-                else:
-                    remove.append(case)
-
-            elif case["stage"] == "bundle_right":
-                if x2 < self.sx(1660):
-                    self.canvas.move(item, speed_px, 0)
-                else:
-                    case["stage"] = "bundle_up"
-            elif case["stage"] == "bundle_up":
-                if y1 > self.sy(300):
-                    self.canvas.move(item, 0, -speed_px)
-                else:
-                    case["stage"] = "bundle_left"
-            elif case["stage"] == "bundle_left":
-                if x1 > self.sx(1300):
-                    self.canvas.move(item, -speed_px, 0)
-                else:
-                    remove.append(case)
+            done = self._move_item_along_path(case["id"], case, speed_px)
+            if done:
+                remove.append(case)
 
         for case in remove:
             if case in self.case_items:
@@ -416,16 +418,19 @@ class SimApp:
         count = self.changeovers.get()
         if count <= 0:
             return
+
         interval = total_sim_sec / (count + 1)
         expected = 0
         for i in range(1, count + 1):
             if self.elapsed_sim_sec >= i * interval:
                 expected = i
+
         if expected > self.completed_changeovers and not self.changeover_active:
             self.changeover_active = True
             self.completed_changeovers += 1
             self.changeover_end_sec = self.elapsed_sim_sec + 7 * 60
             self.status.config(text="Changeover active: 7 simulated minutes.")
+
         if self.changeover_active and self.elapsed_sim_sec >= self.changeover_end_sec:
             self.changeover_active = False
             self._refresh_mode()
@@ -442,21 +447,25 @@ class SimApp:
 
     def _tick(self):
         dt_real = 0.05
+
         if self.running:
             total_limit = self.sim_minutes.get() * 60.0
             if self.elapsed_sim_sec < total_limit:
                 self.elapsed_sim_sec += dt_real * self.time_scale.get()
                 self._apply_changeovers()
+
                 if not self.changeover_active:
                     interval = 60.0 / max(1.0, self.trays_per_min.get())
                     if self.elapsed_sim_sec - self.last_spawn_sec >= interval:
                         self._spawn_tray()
                         self.last_spawn_sec = self.elapsed_sim_sec
+
                 self._move_trays(dt_real)
                 self._move_cases(dt_real)
             else:
                 self.running = False
                 self.status.config(text="Simulation complete.")
+
         self._update_labels()
         self.root.after(50, self._tick)
 
