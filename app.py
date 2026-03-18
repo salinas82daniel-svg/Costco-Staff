@@ -18,12 +18,10 @@ DESIGN_W = 1900
 DESIGN_H = 820
 SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 180) / DESIGN_H)
 
-
 def sx(x): return x * SCALE
 def sy(y): return y * SCALE
 def ux(x): return x / SCALE
 def uy(y): return y / SCALE
-
 
 DEFAULT_LAYOUT = {
     "employees": [
@@ -52,7 +50,6 @@ DEFAULT_LAYOUT = {
     ],
 }
 
-
 class App:
     def __init__(self, root):
         self.root = root
@@ -60,8 +57,8 @@ class App:
         self.root.geometry(f"{WINDOW_W}x{WINDOW_H}")
         self.root.configure(bg=BG)
 
-        self.mode = tk.StringVar(value="edit")      # edit / sim
-        self.flow = tk.StringVar(value="normal")    # normal / bundle
+        self.mode = tk.StringVar(value="edit")
+        self.flow = tk.StringVar(value="normal")
         self.show_labels = tk.BooleanVar(value=True)
 
         self.trays_per_min = tk.DoubleVar(value=32.0)
@@ -90,12 +87,12 @@ class App:
         self.trays = []
         self.cases = []
 
-        self._ui()
+        self._build_ui()
         self._draw()
         self._update_kpis()
         self._tick()
 
-    def _ui(self):
+    def _build_ui(self):
         top = tk.Frame(self.root, bg=BG)
         top.pack(fill="x", padx=4, pady=4)
 
@@ -151,7 +148,13 @@ class App:
             val.pack(padx=18, pady=(0, 8))
             self.kpis[label] = val
 
-        self.canvas = tk.Canvas(self.root, width=int(DESIGN_W * SCALE), height=int(DESIGN_H * SCALE), bg=BG, highlightthickness=0)
+        self.canvas = tk.Canvas(
+            self.root,
+            width=int(DESIGN_W * SCALE),
+            height=int(DESIGN_H * SCALE),
+            bg=BG,
+            highlightthickness=0,
+        )
         self.canvas.pack(padx=4, pady=4)
 
         self.canvas.bind("<Button-1>", self.click)
@@ -184,10 +187,8 @@ class App:
         c.delete("all")
         self.item_map.clear()
 
-        # Title
         c.create_text(sx(950), sy(28), text="Grinding Room / Bundle Operation Flow", font=("Arial", max(12, int(20 * SCALE)), "bold"))
 
-        # Machine boxes
         self._rect(80, 0, 650, 55, "Grinding Room", bold=True)
         self._rect(30, 95, 80, 490, "Vemag / Brick", vertical=True)
         self._rect(190, 95, 500, 135, "Blender Mixer Augers")
@@ -205,13 +206,11 @@ class App:
         self._rect(1300, 300, 1375, 350, "Pallet")
         self._rect(1375, 320, 1650, 350, "Tape, conveyor")
 
-        # Paths
         self._path_line([(80, 300), (80, 420), (620, 420), (620, 195), (685, 195), (685, 275), (715, 275)], RED)
         self._path_line([(715, 275), (715, 420), (1300, 420), (1300, 325), (1375, 325)], BLUE)
         self._path_line([(715, 275), (715, 615), (1605, 615)], ORANGE)
         self._path_line([(1605, 615), (1660, 615), (1660, 300), (1300, 300)], PURPLE)
 
-        # Legend
         legend_x = 1420
         self._legend_box(legend_x, 120, YELLOW, "Grinding labor")
         self._legend_box(legend_x, 160, ORANGE, "Bundle labor / bundle trays")
@@ -233,13 +232,11 @@ class App:
                 continue
             self.draw_note(n)
 
-        if self.mode.get() == "edit":
-            self.status.config(text="Edit mode: drag employees/notes. Double-click to rename.")
-        else:
-            if show_bundle:
-                self.status.config(text="Bundle mode simulation.")
-            else:
-                self.status.config(text="Normal mode simulation.")
+        self.status.config(
+            text="Edit mode: drag employees/notes. Double-click to rename."
+            if self.mode.get() == "edit"
+            else ("Bundle mode simulation." if show_bundle else "Normal mode simulation.")
+        )
 
     def draw_emp(self, e):
         x, y = e["x"], e["y"]
@@ -270,7 +267,7 @@ class App:
     def drag(self, e):
         if self.mode.get() != "edit" or not self.drag_item:
             return
-        kind, obj = self.drag_item
+        _, obj = self.drag_item
         obj["x"] = ux(e.x) - self.drag_offset[0]
         obj["y"] = uy(e.y) - self.drag_offset[1]
         self._draw()
@@ -387,7 +384,7 @@ class App:
             "i": 0
         })
 
-    def move(self, item, speed=2.0):
+    def move(self, item, speed):
         coords = self.canvas.coords(item["id"])
         cx = (coords[0] + coords[2]) / 2
         cy = (coords[1] + coords[3]) / 2
@@ -469,12 +466,10 @@ class App:
         self._update_kpis()
         self.root.after(50, self._tick)
 
-
 def main():
     root = tk.Tk()
     App(root)
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()
