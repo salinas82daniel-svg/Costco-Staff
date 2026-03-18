@@ -18,6 +18,8 @@ DESIGN_W = 1900
 DESIGN_H = 820
 SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 180) / DESIGN_H)
 
+TRAVEL_TIME_TO_PACK_MIN = 1.0  # user provided
+
 def sx(x): return x * SCALE
 def sy(y): return y * SCALE
 def ux(x): return x / SCALE
@@ -47,8 +49,10 @@ DEFAULT_LAYOUT = {
     ],
     "notes": [
         {"key": "7_note", "text": "Box Maker Costco", "x": 835, "y": 250},
+        {"key": "8_note", "text": "Line Supply", "x": 800, "y": 200},
     ],
 }
+
 
 class App:
     def __init__(self, root):
@@ -75,8 +79,6 @@ class App:
         self.elapsed_sim_sec = 0.0
         self.last_spawn_sec = 0.0
         self.completed_changeovers = 0
-        self.changeover_active = False
-        self.changeover_end_sec = 0.0
 
         self.tray_total = 0
         self.regular_case_total = 0
@@ -86,6 +88,9 @@ class App:
 
         self.trays = []
         self.cases = []
+
+        # pack point is between 4 and 5
+        self.pack_point = (670, 275)
 
         self._build_ui()
         self._draw()
@@ -140,7 +145,7 @@ class App:
         kpi_row.pack(fill="x", padx=4, pady=(0, 4))
 
         self.kpis = {}
-        for label in ["Minutes Simulated", "Trays Produced", "Regular Cases", "Bundle Cases", "Completed Changeovers", "Backlog"]:
+        for label in ["Minutes Simulated", "Trays Produced", "Regular Cases", "Bundle Cases", "Completed Changeovers", "WIP"]:
             box = tk.Frame(kpi_row, bg="white", highlightbackground="#bbbbbb", highlightthickness=1)
             box.pack(side="left", padx=4)
             tk.Label(box, text=label, font=("Arial", 10, "bold"), bg="white").pack(padx=18, pady=(8, 2))
@@ -206,17 +211,29 @@ class App:
         self._rect(1300, 300, 1375, 350, "Pallet")
         self._rect(1375, 320, 1650, 350, "Tape, conveyor")
 
-        self._path_line([(80, 300), (80, 420), (620, 420), (620, 195), (685, 195), (685, 275), (715, 275)], RED)
-        self._path_line([(715, 275), (715, 420), (1300, 420), (1300, 325), (1375, 325)], BLUE)
-        self._path_line([(715, 275), (715, 615), (1605, 615)], ORANGE)
-        self._path_line([(1605, 615), (1660, 615), (1660, 300), (1300, 300)], PURPLE)
+        # main tray path to pack point between 4 and 5
+        main_tray_path = [(80, 300), (80, 420), (620, 420), (620, 195), (685, 195), self.pack_point]
+        self._path_line(main_tray_path, RED)
 
-        legend_x = 1420
-        self._legend_box(legend_x, 120, YELLOW, "Grinding labor")
-        self._legend_box(legend_x, 160, ORANGE, "Bundle labor / bundle trays")
-        self._legend_box(legend_x, 200, TRAY, "Tray")
-        self._legend_box(legend_x, 240, BLUE, "Regular boxes")
-        self._legend_box(legend_x, 280, PURPLE, "Bundle boxes")
+        # regular case path begins at same pack point
+        regular_case_path = [self.pack_point, (670, 420), (1300, 420), (1300, 325), (1375, 325)]
+        self._path_line(regular_case_path, BLUE)
+
+        # bundle tray path begins at same pack point
+        bundle_tray_path = [self.pack_point, (670, 615), (1605, 615)]
+        self._path_line(bundle_tray_path, ORANGE)
+
+        # bundle box path
+        bundle_box_path = [(1605, 615), (1660, 615), (1660, 300), (1300, 300)]
+        self._path_line(bundle_box_path, PURPLE)
+
+        # moved higher and farther right
+        legend_x = 1540
+        self._legend_box(legend_x, 45, YELLOW, "Grinding labor")
+        self._legend_box(legend_x, 85, ORANGE, "Bundle labor / bundle trays")
+        self._legend_box(legend_x, 125, TRAY, "Tray")
+        self._legend_box(legend_x, 165, BLUE, "Regular boxes")
+        self._legend_box(legend_x, 205, PURPLE, "Bundle boxes")
 
         show_bundle = self.flow.get() == "bundle"
         for e in self.layout["employees"]:
@@ -342,8 +359,6 @@ class App:
         self.elapsed_sim_sec = 0.0
         self.last_spawn_sec = 0.0
         self.completed_changeovers = 0
-        self.changeover_active = False
-        self.changeover_end_sec = 0.0
         self.tray_total = 0
         self.regular_case_total = 0
         self.bundle_case_total = 0
@@ -357,26 +372,28 @@ class App:
         self._update_kpis()
 
     def spawn_tray(self):
-        size = max(6, int(10 * SCALE))
-        r = self.canvas.create_rectangle(sx(70), sy(300), sx(70) + size, sy(300) + size, fill=TRAY, outline=TRAY)
+        # smaller tray squares so spacing is visible
+        size = max(4, int(4 * SCALE))
+        r = self.canvas.create_rectangle(sx(78), sy(298), sx(78) + size, sy(298) + size, fill=TRAY, outline=TRAY)
+        main_path = [(80, 420), (620, 420), (620, 195), (685, 195), self.pack_point]
         self.trays.append({
             "id": r,
-            "path": [(80, 420), (620, 420), (620, 195), (685, 195), (685, 275), (715, 275)],
+            "path": main_path,
             "i": 0,
             "bundle": False
         })
 
     def spawn_regular_case(self):
-        size = max(8, int(12 * SCALE))
-        r = self.canvas.create_rectangle(sx(707), sy(268), sx(707) + size, sy(268) + size, fill=BLUE, outline=BLUE)
+        size = max(8, int(10 * SCALE))
+        r = self.canvas.create_rectangle(sx(self.pack_point[0]), sy(self.pack_point[1]), sx(self.pack_point[0]) + size, sy(self.pack_point[1]) + size, fill=BLUE, outline=BLUE)
         self.cases.append({
             "id": r,
-            "path": [(715, 420), (1300, 420), (1300, 325), (1375, 325)],
+            "path": [(670, 420), (1300, 420), (1300, 325), (1375, 325)],
             "i": 0
         })
 
     def spawn_bundle_case(self):
-        size = max(8, int(12 * SCALE))
+        size = max(8, int(10 * SCALE))
         r = self.canvas.create_rectangle(sx(1600), sy(607), sx(1600) + size, sy(607) + size, fill=PURPLE, outline=PURPLE)
         self.cases.append({
             "id": r,
@@ -384,7 +401,15 @@ class App:
             "i": 0
         })
 
-    def move(self, item, speed):
+    def path_length_px(self, pts):
+        total = 0.0
+        for i in range(len(pts) - 1):
+            x1, y1 = sx(pts[i][0]), sy(pts[i][1])
+            x2, y2 = sx(pts[i + 1][0]), sy(pts[i + 1][1])
+            total += math.hypot(x2 - x1, y2 - y1)
+        return total
+
+    def move(self, item, speed_px):
         coords = self.canvas.coords(item["id"])
         cx = (coords[0] + coords[2]) / 2
         cy = (coords[1] + coords[3]) / 2
@@ -394,11 +419,11 @@ class App:
         tx, ty = sx(tx), sy(ty)
         dx, dy = tx - cx, ty - cy
         d = math.hypot(dx, dy)
-        if d < speed:
+        if d < speed_px:
             self.canvas.move(item["id"], dx, dy)
             item["i"] += 1
         else:
-            self.canvas.move(item["id"], dx / d * speed, dy / d * speed)
+            self.canvas.move(item["id"], dx / d * speed_px, dy / d * speed_px)
         return item["i"] >= len(item["path"])
 
     def _update_kpis(self):
@@ -409,23 +434,36 @@ class App:
         self.kpis["Regular Cases"].config(text=str(self.regular_case_total))
         self.kpis["Bundle Cases"].config(text=str(self.bundle_case_total))
         self.kpis["Completed Changeovers"].config(text=str(self.completed_changeovers))
-        self.kpis["Backlog"].config(text=str(len(self.trays)))
+
+        # user-defined expectation: 1 minute travel to 4/5
+        expected_wip = int(round(self.trays_per_min.get() * TRAVEL_TIME_TO_PACK_MIN))
+        self.kpis["WIP"].config(text=str(expected_wip))
 
     def _tick(self):
         dt_real = 0.05
+        sim_dt = dt_real * self.time_scale.get()
+
         if self.running and self.mode.get() == "sim":
             total_limit = self.sim_minutes.get() * 60.0
             if self.elapsed_sim_sec < total_limit:
-                self.elapsed_sim_sec += dt_real * self.time_scale.get()
+                self.elapsed_sim_sec += sim_dt
 
                 interval = 60.0 / max(1.0, self.trays_per_min.get())
-                if self.elapsed_sim_sec - self.last_spawn_sec >= interval:
+
+                # catch up spawning so rate stays accurate
+                while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
                     self.spawn_tray()
-                    self.last_spawn_sec = self.elapsed_sim_sec
+                    self.last_spawn_sec += interval
+
+                # travel time to 4/5 = 1 minute
+                main_path = [(80, 420), (620, 420), (620, 195), (685, 195), self.pack_point]
+                main_len_px = self.path_length_px(main_path)
+                main_speed_px_per_sim_sec = main_len_px / (TRAVEL_TIME_TO_PACK_MIN * 60.0)
+                tray_speed_px = main_speed_px_per_sim_sec * sim_dt
 
                 remove = []
                 for t in self.trays:
-                    if self.move(t, 2.6):
+                    if self.move(t, tray_speed_px):
                         if self.flow.get() == "normal" and not t["bundle"]:
                             remove.append(t)
                             self.tray_total += 1
@@ -437,7 +475,7 @@ class App:
                         else:
                             if not t["bundle"]:
                                 t["bundle"] = True
-                                t["path"] = [(715, 615), (1605, 615)]
+                                t["path"] = [(670, 615), (1605, 615)]
                                 t["i"] = 0
                             else:
                                 remove.append(t)
@@ -449,16 +487,19 @@ class App:
                                     self.spawn_bundle_case()
 
                 for t in remove:
-                    self.canvas.delete(t["id"])
-                    self.trays.remove(t)
+                    if t in self.trays:
+                        self.canvas.delete(t["id"])
+                        self.trays.remove(t)
 
                 remove_cases = []
+                case_speed_px = 2.8
                 for c in self.cases:
-                    if self.move(c, 2.0):
+                    if self.move(c, case_speed_px):
                         remove_cases.append(c)
                 for c in remove_cases:
-                    self.canvas.delete(c["id"])
-                    self.cases.remove(c)
+                    if c in self.cases:
+                        self.canvas.delete(c["id"])
+                        self.cases.remove(c)
             else:
                 self.running = False
                 self.status.config(text="Simulation complete.")
@@ -466,10 +507,12 @@ class App:
         self._update_kpis()
         self.root.after(50, self._tick)
 
+
 def main():
     root = tk.Tk()
     App(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
