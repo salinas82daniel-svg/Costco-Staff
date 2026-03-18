@@ -36,12 +36,10 @@ DEFAULT_LAYOUT = {
         {"key": "6", "label": "6", "x": 705, "y": 430, "color": YELLOW},
         {"key": "7", "label": "7", "x": 760, "y": 430, "color": YELLOW},
         {"key": "8", "label": "8", "x": 1210, "y": 410, "color": YELLOW},
-
         {"key": "4_orange", "label": "4", "x": 720, "y": 560, "color": YELLOW},
         {"key": "5_orange", "label": "5", "x": 720, "y": 585, "color": YELLOW},
         {"key": "6_orange", "label": "6", "x": 760, "y": 665, "color": YELLOW},
         {"key": "7_orange", "label": "7", "x": 760, "y": 250, "color": YELLOW},
-
         {"key": "3_blue", "label": "3", "x": 1665, "y": 560, "color": BLUE},
         {"key": "2_blue", "label": "2", "x": 1665, "y": 595, "color": BLUE},
         {"key": "1_blue", "label": "1", "x": 1635, "y": 630, "color": BLUE},
@@ -67,7 +65,7 @@ class App:
 
         self.trays_per_min = tk.DoubleVar(value=80.0)
         self.sim_minutes = tk.DoubleVar(value=60.0)
-        self.time_scale = tk.DoubleVar(value=10.0)
+        self.time_scale = tk.DoubleVar(value=20.0)
 
         self.layout = json.loads(json.dumps(DEFAULT_LAYOUT))
         self.drag_item = None
@@ -123,7 +121,7 @@ class App:
 
         ttk.Label(top, text="Speed-up").pack(side="left")
         ttk.Scale(top, from_=1, to=300, variable=self.time_scale, orient="horizontal", length=120).pack(side="left")
-        self.lbl_speed = ttk.Label(top, text="10x")
+        self.lbl_speed = ttk.Label(top, text="20x")
         self.lbl_speed.pack(side="left", padx=(6, 10))
 
         controls = tk.Frame(self.root, bg=BG)
@@ -270,8 +268,16 @@ class App:
         self._rect(1300, 300, 1375, 350, "Pallet")
         self._rect(1375, 320, 1650, 350, "Tape, conveyor")
 
-        # fixed red line: straight down, not angled
-        main_tray_path = [(80, 300), (80, 420), (620, 420), (620, 195), (620, 275), self.pack_point]
+        # corrected red path
+        main_tray_path = [
+            (80, 300),
+            (80, 420),
+            (620, 420),
+            (620, 170),
+            (690, 170),
+            (690, 275),
+            self.pack_point,
+        ]
         self._path_line(main_tray_path, RED)
 
         regular_case_path = [self.pack_point, (670, 420), (1300, 420), (1300, 325), (1375, 325)]
@@ -422,7 +428,6 @@ class App:
         self.running = False
         self.elapsed_sim_sec = 0.0
         self.last_spawn_sec = 0.0
-        self.completed_changeovers = 0
         self.tray_total = 0
         self.regular_case_total = 0
         self.bundle_case_total = 0
@@ -440,12 +445,19 @@ class App:
         size = max(3, int(3 * SCALE))
         start_x, start_y = 80, 300
         r = self.canvas.create_rectangle(sx(start_x), sy(start_y), sx(start_x) + size, sy(start_y) + size, fill=TRAY, outline=TRAY)
-        main_path = [(80, 420), (620, 420), (620, 195), (620, 275), self.pack_point]
+        main_path = [
+            (80, 420),
+            (620, 420),
+            (620, 170),
+            (690, 170),
+            (690, 275),
+            self.pack_point,
+        ]
         self.trays.append({
             "id": r,
             "path": main_path,
             "i": 0,
-            "bundle": False
+            "bundle": False,
         })
 
     def spawn_regular_case(self):
@@ -454,7 +466,7 @@ class App:
         self.cases.append({
             "id": r,
             "path": [(670, 420), (1300, 420), (1300, 325), (1375, 325)],
-            "i": 0
+            "i": 0,
         })
 
     def spawn_bundle_case(self):
@@ -463,7 +475,7 @@ class App:
         self.cases.append({
             "id": r,
             "path": [(1660, 615), (1660, 300), (1300, 300)],
-            "i": 0
+            "i": 0,
         })
 
     def path_length_px(self, pts):
@@ -504,7 +516,6 @@ class App:
         if not self.changeover_active:
             self.changeover_active = True
             self.changeover_end_sec = self.elapsed_sim_sec + CHANGEOVER_MINUTES * 60.0
-            self.completed_changeovers += 1
             self._draw()
             return False
 
@@ -548,7 +559,14 @@ class App:
                     else:
                         break
 
-                main_path = [(80, 420), (620, 420), (620, 195), (620, 275), self.pack_point]
+                main_path = [
+                    (80, 420),
+                    (620, 420),
+                    (620, 170),
+                    (690, 170),
+                    (690, 275),
+                    self.pack_point,
+                ]
                 main_len_px = self.path_length_px(main_path)
                 main_speed_px_per_sim_sec = main_len_px / (TRAVEL_TIME_TO_PACK_MIN * 60.0)
                 tray_speed_px = main_speed_px_per_sim_sec * sim_dt
