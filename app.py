@@ -1,5 +1,6 @@
 import json
 import math
+import time
 import tkinter as tk
 from tkinter import ttk, simpledialog, filedialog
 
@@ -20,14 +21,12 @@ SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 180) / DESIGN_H)
 
 TRAVEL_TIME_TO_PACK_MIN = 1.0
 CHANGEOVER_MINUTES = 7.0
-CHANGEOVER_FLASH_REAL_SEC = 0.8
-
+CHANGEOVER_FLASH_REAL_SEC = 1.0
 
 def sx(x): return x * SCALE
 def sy(y): return y * SCALE
 def ux(x): return x / SCALE
 def uy(y): return y / SCALE
-
 
 DEFAULT_LAYOUT = {
     "employees": [
@@ -56,7 +55,6 @@ DEFAULT_LAYOUT = {
         {"key": "8_note", "text": "Line Supply", "x": 800, "y": 200},
     ],
 }
-
 
 class App:
     def __init__(self, root):
@@ -98,7 +96,7 @@ class App:
         self.current_run_completed = 0
 
         self.changeover_active = False
-        self.changeover_flash_until_real = 0.0
+        self.changeover_flash_end_time = 0.0
 
         self._run_entry_vars = [tk.StringVar(value="") for _ in range(10)]
 
@@ -424,7 +422,7 @@ class App:
         self.current_run_index = 0
         self.current_run_completed = 0
         self.changeover_active = False
-        self.changeover_flash_until_real = 0.0
+        self.changeover_flash_end_time = 0.0
 
     def start(self):
         if self.mode.get() != "sim":
@@ -515,20 +513,22 @@ class App:
             self.canvas.move(item["id"], dx / d * speed_px, dy / d * speed_px)
         return item["i"] >= len(item["path"])
 
-    def start_changeover(self):
+    def maybe_finish_changeover_flash(self):
+        if self.changeover_active and time.monotonic() >= self.changeover_flash_end_time:
+            self.changeover_active = False
+            self.current_run_index += 1
+            self.current_run_completed = 0
+            self._draw()
+
+    def begin_changeover(self):
         self.changeover_active = True
         self.elapsed_sim_sec += CHANGEOVER_MINUTES * 60.0
-        self.changeover_flash_until_real = self.root.tk.call("after", "info")
-        self.root.after(int(CHANGEOVER_FLASH_REAL_SEC * 1000), self.finish_changeover)
-        self._draw()
-
-    def finish_changeover(self):
-        self.changeover_active = False
-        self.current_run_index += 1
-        self.current_run_completed = 0
+        self.changeover_flash_end_time = time.monotonic() + CHANGEOVER_FLASH_REAL_SEC
         self._draw()
 
     def can_spawn_next_tray(self):
+        self.maybe_finish_changeover_flash()
+
         if self.changeover_active:
             return False
 
@@ -541,7 +541,7 @@ class App:
         if self.current_run_completed < self.run_queue[self.current_run_index]:
             return True
 
-        self.start_changeover()
+        self.begin_changeover()
         return False
 
     def _update_kpis(self):
@@ -564,7 +564,8 @@ class App:
         if self.running and self.mode.get() == "sim":
             total_limit = self.sim_minutes.get() * 60.0
             if self.elapsed_sim_sec < total_limit:
-                # only advance normal sim time when not flashing changeover
+                self.maybe_finish_changeover_flash()
+
                 if not self.changeover_active:
                     self.elapsed_sim_sec += sim_dt
 
