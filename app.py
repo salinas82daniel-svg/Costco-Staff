@@ -20,6 +20,7 @@ SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 180) / DESIGN_H)
 
 TRAVEL_TIME_TO_PACK_MIN = 1.0
 CHANGEOVER_MINUTES = 7.0
+CHANGEOVER_FLASH_REAL_SEC = 0.8
 
 
 def sx(x): return x * SCALE
@@ -95,8 +96,9 @@ class App:
         self.run_queue = []
         self.current_run_index = 0
         self.current_run_completed = 0
+
         self.changeover_active = False
-        self.changeover_end_sec = 0.0
+        self.changeover_flash_until_real = 0.0
 
         self._run_entry_vars = [tk.StringVar(value="") for _ in range(10)]
 
@@ -224,7 +226,6 @@ class App:
 
             self.run_queue = runs
             self.status.config(text=f"Settings applied. {len(runs)} run(s) loaded.")
-            self._update_kpis()
             win.destroy()
 
         tk.Button(frame, text="Apply", command=apply_settings).grid(row=16, column=0, pady=18, sticky="w")
@@ -423,7 +424,7 @@ class App:
         self.current_run_index = 0
         self.current_run_completed = 0
         self.changeover_active = False
-        self.changeover_end_sec = 0.0
+        self.changeover_flash_until_real = 0.0
 
     def start(self):
         if self.mode.get() != "sim":
@@ -468,7 +469,7 @@ class App:
             "path": main_path,
             "i": 0,
             "bundle": False,
-            "spawn_flow": self.flow.get(),  # preserve the mode it started in
+            "spawn_flow": self.flow.get(),
         })
 
     def spawn_regular_case(self):
@@ -514,17 +515,20 @@ class App:
             self.canvas.move(item["id"], dx / d * speed_px, dy / d * speed_px)
         return item["i"] >= len(item["path"])
 
-    def maybe_advance_changeover(self):
-        if self.changeover_active and self.elapsed_sim_sec >= self.changeover_end_sec:
-            self.changeover_active = False
-            self.current_run_index += 1
-            self.current_run_completed = 0
-            self._draw()
+    def start_changeover(self):
+        self.changeover_active = True
+        self.elapsed_sim_sec += CHANGEOVER_MINUTES * 60.0
+        self.changeover_flash_until_real = self.root.tk.call("after", "info")
+        self.root.after(int(CHANGEOVER_FLASH_REAL_SEC * 1000), self.finish_changeover)
+        self._draw()
+
+    def finish_changeover(self):
+        self.changeover_active = False
+        self.current_run_index += 1
+        self.current_run_completed = 0
+        self._draw()
 
     def can_spawn_next_tray(self):
-        # first let changeover finish if time elapsed
-        self.maybe_advance_changeover()
-
         if self.changeover_active:
             return False
 
@@ -537,10 +541,7 @@ class App:
         if self.current_run_completed < self.run_queue[self.current_run_index]:
             return True
 
-        # start changeover only once after run completes
-        self.changeover_active = True
-        self.changeover_end_sec = self.elapsed_sim_sec + CHANGEOVER_MINUTES * 60.0
-        self._draw()
+        self.start_changeover()
         return False
 
     def _update_kpis(self):
@@ -563,19 +564,16 @@ class App:
         if self.running and self.mode.get() == "sim":
             total_limit = self.sim_minutes.get() * 60.0
             if self.elapsed_sim_sec < total_limit:
-                self.elapsed_sim_sec += sim_dt
+                # only advance normal sim time when not flashing changeover
+                if not self.changeover_active:
+                    self.elapsed_sim_sec += sim_dt
 
-                # allow changeover to finish even if no spawning occurs
-                self.maybe_advance_changeover()
+                    interval = 60.0 / max(1.0, self.trays_per_min.get())
 
-                interval = 60.0 / max(1.0, self.trays_per_min.get())
-
-                while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
-                    if self.can_spawn_next_tray():
-                        self.spawn_tray()
+                    while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
+                        if self.can_spawn_next_tray():
+                            self.spawn_tray()
                         self.last_spawn_sec += interval
-                    else:
-                        break
 
                 main_path = [
                     (80, 420),
@@ -592,7 +590,6 @@ class App:
                 remove = []
                 for t in self.trays:
                     if self.move(t, tray_speed_px):
-                        # existing tray keeps its original route decision
                         if t["spawn_flow"] == "normal" and not t["bundle"]:
                             remove.append(t)
                             self.tray_total += 1
