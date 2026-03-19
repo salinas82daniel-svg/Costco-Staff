@@ -21,10 +21,12 @@ SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 180) / DESIGN_H)
 TRAVEL_TIME_TO_PACK_MIN = 1.0
 CHANGEOVER_MINUTES = 7.0
 
+
 def sx(x): return x * SCALE
 def sy(y): return y * SCALE
 def ux(x): return x / SCALE
 def uy(y): return y / SCALE
+
 
 DEFAULT_LAYOUT = {
     "employees": [
@@ -36,10 +38,12 @@ DEFAULT_LAYOUT = {
         {"key": "6", "label": "6", "x": 705, "y": 430, "color": YELLOW},
         {"key": "7", "label": "7", "x": 760, "y": 430, "color": YELLOW},
         {"key": "8", "label": "8", "x": 1210, "y": 410, "color": YELLOW},
+
         {"key": "4_orange", "label": "4", "x": 720, "y": 560, "color": YELLOW},
         {"key": "5_orange", "label": "5", "x": 720, "y": 585, "color": YELLOW},
         {"key": "6_orange", "label": "6", "x": 760, "y": 665, "color": YELLOW},
         {"key": "7_orange", "label": "7", "x": 760, "y": 250, "color": YELLOW},
+
         {"key": "3_blue", "label": "3", "x": 1665, "y": 560, "color": BLUE},
         {"key": "2_blue", "label": "2", "x": 1665, "y": 595, "color": BLUE},
         {"key": "1_blue", "label": "1", "x": 1635, "y": 630, "color": BLUE},
@@ -51,6 +55,7 @@ DEFAULT_LAYOUT = {
         {"key": "8_note", "text": "Line Supply", "x": 800, "y": 200},
     ],
 }
+
 
 class App:
     def __init__(self, root):
@@ -268,7 +273,6 @@ class App:
         self._rect(1300, 300, 1375, 350, "Pallet")
         self._rect(1375, 320, 1650, 350, "Tape, conveyor")
 
-        # corrected red path
         main_tray_path = [
             (80, 300),
             (80, 420),
@@ -313,7 +317,13 @@ class App:
         if self.mode.get() == "edit":
             self.status.config(text="Edit mode: drag employees/notes. Double-click to rename.")
         elif self.changeover_active:
-            self.status.config(text="Changeover in progress.")
+            self.status.config(text="CHANGEOVER")
+            c.create_text(
+                sx(1030), sy(95),
+                text="CHANGEOVER",
+                fill="red",
+                font=("Arial", max(18, int(28 * SCALE)), "bold")
+            )
         else:
             self.status.config(text="Bundle mode simulation." if show_bundle else "Normal mode simulation.")
 
@@ -458,6 +468,7 @@ class App:
             "path": main_path,
             "i": 0,
             "bundle": False,
+            "spawn_flow": self.flow.get(),  # preserve the mode it started in
         })
 
     def spawn_regular_case(self):
@@ -503,7 +514,20 @@ class App:
             self.canvas.move(item["id"], dx / d * speed_px, dy / d * speed_px)
         return item["i"] >= len(item["path"])
 
+    def maybe_advance_changeover(self):
+        if self.changeover_active and self.elapsed_sim_sec >= self.changeover_end_sec:
+            self.changeover_active = False
+            self.current_run_index += 1
+            self.current_run_completed = 0
+            self._draw()
+
     def can_spawn_next_tray(self):
+        # first let changeover finish if time elapsed
+        self.maybe_advance_changeover()
+
+        if self.changeover_active:
+            return False
+
         if not self.run_queue:
             return True
 
@@ -513,19 +537,10 @@ class App:
         if self.current_run_completed < self.run_queue[self.current_run_index]:
             return True
 
-        if not self.changeover_active:
-            self.changeover_active = True
-            self.changeover_end_sec = self.elapsed_sim_sec + CHANGEOVER_MINUTES * 60.0
-            self._draw()
-            return False
-
-        if self.elapsed_sim_sec >= self.changeover_end_sec:
-            self.changeover_active = False
-            self.current_run_index += 1
-            self.current_run_completed = 0
-            self._draw()
-            return self.current_run_index < len(self.run_queue)
-
+        # start changeover only once after run completes
+        self.changeover_active = True
+        self.changeover_end_sec = self.elapsed_sim_sec + CHANGEOVER_MINUTES * 60.0
+        self._draw()
         return False
 
     def _update_kpis(self):
@@ -549,6 +564,9 @@ class App:
             total_limit = self.sim_minutes.get() * 60.0
             if self.elapsed_sim_sec < total_limit:
                 self.elapsed_sim_sec += sim_dt
+
+                # allow changeover to finish even if no spawning occurs
+                self.maybe_advance_changeover()
 
                 interval = 60.0 / max(1.0, self.trays_per_min.get())
 
@@ -574,7 +592,8 @@ class App:
                 remove = []
                 for t in self.trays:
                     if self.move(t, tray_speed_px):
-                        if self.flow.get() == "normal" and not t["bundle"]:
+                        # existing tray keeps its original route decision
+                        if t["spawn_flow"] == "normal" and not t["bundle"]:
                             remove.append(t)
                             self.tray_total += 1
                             if self.run_queue and self.current_run_index < len(self.run_queue):
