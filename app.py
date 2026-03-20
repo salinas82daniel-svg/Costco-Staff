@@ -23,12 +23,10 @@ TRAVEL_TIME_TO_PACK_MIN = 1.0
 CHANGEOVER_MINUTES = 7.0
 CHANGEOVER_FLASH_REAL_SEC = 1.0
 
-
 def sx(x): return x * SCALE
 def sy(y): return y * SCALE
 def ux(x): return x / SCALE
 def uy(y): return y / SCALE
-
 
 DEFAULT_LAYOUT = {
     "employees": [
@@ -57,7 +55,6 @@ DEFAULT_LAYOUT = {
         {"key": "8_note", "text": "Line Supply", "x": 800, "y": 200},
     ],
 }
-
 
 class App:
     def __init__(self, root):
@@ -96,7 +93,7 @@ class App:
 
         self.run_queue = []
         self.current_run_index = 0
-        self.current_run_spawned = 0
+        self.current_run_completed = 0
 
         self.changeover_active = False
         self.changeover_flash_end_time = 0.0
@@ -423,7 +420,7 @@ class App:
 
     def prepare_run_queue(self):
         self.current_run_index = 0
-        self.current_run_spawned = 0
+        self.current_run_completed = 0
         self.changeover_active = False
         self.changeover_flash_end_time = 0.0
 
@@ -472,8 +469,6 @@ class App:
             "bundle": False,
             "spawn_flow": self.flow.get(),
         })
-        if self.run_queue and self.current_run_index < len(self.run_queue):
-            self.current_run_spawned += 1
 
     def spawn_regular_case(self):
         size = max(8, int(10 * SCALE))
@@ -533,16 +528,13 @@ class App:
             self._draw()
 
     def begin_changeover(self):
-        # add the 7-minute simulated changeover
         delta = CHANGEOVER_MINUTES * 60.0
         self.elapsed_sim_sec += delta
         self.last_spawn_sec += delta
 
-        # immediately arm next run
         self.current_run_index += 1
-        self.current_run_spawned = 0
+        self.current_run_completed = 0
 
-        # visual only
         self.changeover_active = True
         self.changeover_flash_end_time = time.monotonic() + CHANGEOVER_FLASH_REAL_SEC
         self._draw()
@@ -560,14 +552,13 @@ class App:
             return False
 
         target = self.run_queue[self.current_run_index]
-        if self.current_run_spawned < target:
+        if self.current_run_completed < target:
             return True
 
         self.begin_changeover()
 
         if self.current_run_index >= len(self.run_queue):
             return False
-
         return True
 
     def _update_kpis(self):
@@ -618,6 +609,8 @@ class App:
                         if t["spawn_flow"] == "normal" and not t["bundle"]:
                             remove.append(t)
                             self.tray_total += 1
+                            if self.run_queue and self.current_run_index < len(self.run_queue):
+                                self.current_run_completed += 1
                             self.regular_pack_buffer += 1
                             if self.regular_pack_buffer >= 12:
                                 self.regular_pack_buffer = 0
@@ -631,6 +624,8 @@ class App:
                             else:
                                 remove.append(t)
                                 self.tray_total += 1
+                                if self.run_queue and self.current_run_index < len(self.run_queue):
+                                    self.current_run_completed += 1
                                 self.bundle_pack_buffer += 1
                                 if self.bundle_pack_buffer >= 12:
                                     self.bundle_pack_buffer = 0
