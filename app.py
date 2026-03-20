@@ -472,7 +472,11 @@ class App:
 
     def spawn_regular_case(self):
         size = max(8, int(10 * SCALE))
-        r = self.canvas.create_rectangle(sx(self.pack_point[0]), sy(self.pack_point[1]), sx(self.pack_point[0]) + size, sy(self.pack_point[1]) + size, fill=BLUE, outline=BLUE)
+        r = self.canvas.create_rectangle(
+            sx(self.pack_point[0]), sy(self.pack_point[1]),
+            sx(self.pack_point[0]) + size, sy(self.pack_point[1]) + size,
+            fill=BLUE, outline=BLUE
+        )
         self.cases.append({
             "id": r,
             "path": [(670, 420), (1300, 420), (1300, 325), (1375, 325)],
@@ -481,7 +485,11 @@ class App:
 
     def spawn_bundle_case(self):
         size = max(8, int(10 * SCALE))
-        r = self.canvas.create_rectangle(sx(1600), sy(607), sx(1600) + size, sy(607) + size, fill=PURPLE, outline=PURPLE)
+        r = self.canvas.create_rectangle(
+            sx(1600), sy(607),
+            sx(1600) + size, sy(607) + size,
+            fill=PURPLE, outline=PURPLE
+        )
         self.cases.append({
             "id": r,
             "path": [(1660, 615), (1660, 300), (1300, 300)],
@@ -514,24 +522,24 @@ class App:
             self.canvas.move(item["id"], dx / d * speed_px, dy / d * speed_px)
         return item["i"] >= len(item["path"])
 
-    def begin_changeover(self):
-        self.changeover_active = True
-        self.elapsed_sim_sec += CHANGEOVER_MINUTES * 60.0
-        self.current_run_index += 1
-        self.current_run_completed = 0
-        self.changeover_flash_end_time = time.monotonic() + CHANGEOVER_FLASH_REAL_SEC
-        self._draw()
-
     def maybe_finish_changeover_flash(self):
         if self.changeover_active and time.monotonic() >= self.changeover_flash_end_time:
             self.changeover_active = False
             self._draw()
 
+    def begin_changeover(self):
+        # logic happens immediately
+        self.elapsed_sim_sec += CHANGEOVER_MINUTES * 60.0
+        self.current_run_index += 1
+        self.current_run_completed = 0
+
+        # visual only
+        self.changeover_active = True
+        self.changeover_flash_end_time = time.monotonic() + CHANGEOVER_FLASH_REAL_SEC
+        self._draw()
+
     def can_spawn_next_tray(self):
         self.maybe_finish_changeover_flash()
-
-        if self.changeover_active:
-            return False
 
         if not self.run_queue:
             return True
@@ -542,8 +550,13 @@ class App:
         if self.current_run_completed < self.run_queue[self.current_run_index]:
             return True
 
+        # order finished -> immediately advance to next run
         self.begin_changeover()
-        return False
+
+        if self.current_run_index >= len(self.run_queue):
+            return False
+
+        return True
 
     def _update_kpis(self):
         self.lbl_tpm.config(text=f"{self.trays_per_min.get():.1f}")
@@ -565,16 +578,15 @@ class App:
         if self.running and self.mode.get() == "sim":
             total_limit = self.sim_minutes.get() * 60.0
             if self.elapsed_sim_sec < total_limit:
+                self.elapsed_sim_sec += sim_dt
                 self.maybe_finish_changeover_flash()
 
-                if not self.changeover_active:
-                    self.elapsed_sim_sec += sim_dt
+                interval = 60.0 / max(1.0, self.trays_per_min.get())
 
-                    interval = 60.0 / max(1.0, self.trays_per_min.get())
-                    while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
-                        if self.can_spawn_next_tray():
-                            self.spawn_tray()
-                        self.last_spawn_sec += interval
+                while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
+                    if self.can_spawn_next_tray():
+                        self.spawn_tray()
+                    self.last_spawn_sec += interval
 
                 main_path = [
                     (80, 420),
@@ -638,12 +650,10 @@ class App:
         self._update_kpis()
         self.root.after(50, self._tick)
 
-
 def main():
     root = tk.Tk()
     app = App(root)
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()
