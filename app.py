@@ -504,7 +504,8 @@ class App:
             return True
         tx, ty = item["path"][item["i"]]
         tx, ty = sx(tx), sy(ty)
-        dx, dy = tx - cx, ty - cy
+        dx = tx - cx
+        dy = ty - cy
         d = math.hypot(dx, dy)
         if d < speed_px:
             self.canvas.move(item["id"], dx, dy)
@@ -513,18 +514,18 @@ class App:
             self.canvas.move(item["id"], dx / d * speed_px, dy / d * speed_px)
         return item["i"] >= len(item["path"])
 
-    def maybe_finish_changeover_flash(self):
-        if self.changeover_active and time.monotonic() >= self.changeover_flash_end_time:
-            self.changeover_active = False
-            self.current_run_index += 1
-            self.current_run_completed = 0
-            self._draw()
-
     def begin_changeover(self):
         self.changeover_active = True
         self.elapsed_sim_sec += CHANGEOVER_MINUTES * 60.0
+        self.current_run_index += 1
+        self.current_run_completed = 0
         self.changeover_flash_end_time = time.monotonic() + CHANGEOVER_FLASH_REAL_SEC
         self._draw()
+
+    def maybe_finish_changeover_flash(self):
+        if self.changeover_active and time.monotonic() >= self.changeover_flash_end_time:
+            self.changeover_active = False
+            self._draw()
 
     def can_spawn_next_tray(self):
         self.maybe_finish_changeover_flash()
@@ -570,7 +571,6 @@ class App:
                     self.elapsed_sim_sec += sim_dt
 
                     interval = 60.0 / max(1.0, self.trays_per_min.get())
-
                     while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
                         if self.can_spawn_next_tray():
                             self.spawn_tray()
