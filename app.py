@@ -1,6 +1,5 @@
 import json
 import math
-import time
 import tkinter as tk
 from tkinter import ttk, simpledialog, filedialog
 
@@ -21,12 +20,13 @@ SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 180) / DESIGN_H)
 
 TRAVEL_TIME_TO_PACK_MIN = 1.0
 CHANGEOVER_MINUTES = 7.0
-CHANGEOVER_FLASH_REAL_SEC = 1.0
+
 
 def sx(x): return x * SCALE
 def sy(y): return y * SCALE
 def ux(x): return x / SCALE
 def uy(y): return y / SCALE
+
 
 DEFAULT_LAYOUT = {
     "employees": [
@@ -55,6 +55,7 @@ DEFAULT_LAYOUT = {
         {"key": "8_note", "text": "Line Supply", "x": 800, "y": 200},
     ],
 }
+
 
 class App:
     def __init__(self, root):
@@ -95,8 +96,9 @@ class App:
         self.current_run_index = 0
         self.current_run_completed = 0
 
-        self.changeover_active = False
-        self.changeover_flash_end_time = 0.0
+        # states: RUNNING_ORDER, CHANGEOVER, DONE
+        self.sim_state = "RUNNING_ORDER"
+        self.changeover_remaining_sim_sec = 0.0
 
         self._run_entry_vars = [tk.StringVar(value="") for _ in range(10)]
 
@@ -315,7 +317,7 @@ class App:
 
         if self.mode.get() == "edit":
             self.status.config(text="Edit mode: drag employees/notes. Double-click to rename.")
-        elif self.changeover_active:
+        elif self.sim_state == "CHANGEOVER":
             self.status.config(text="CHANGEOVER")
             c.create_text(
                 sx(1030), sy(95),
@@ -323,8 +325,16 @@ class App:
                 fill="red",
                 font=("Arial", max(18, int(28 * SCALE)), "bold")
             )
+        elif self.sim_state == "DONE":
+            self.status.config(text="Orders complete.")
         else:
-            self.status.config(text="Bundle mode simulation." if show_bundle else "Normal mode simulation.")
+            if self.run_queue:
+                self.status.config(
+                    text=f"Running order {self.current_run_index + 1}/{len(self.run_queue)} "
+                         f"({self.current_run_completed}/{self.run_queue[self.current_run_index]} trays)"
+                )
+            else:
+                self.status.config(text="Normal mode simulation." if show_bundle is False else "Bundle mode simulation.")
 
     def draw_emp(self, e):
         x, y = e["x"], e["y"]
@@ -421,12 +431,21 @@ class App:
     def prepare_run_queue(self):
         self.current_run_index = 0
         self.current_run_completed = 0
-        self.changeover_active = False
-        self.changeover_flash_end_time = 0.0
+        self.changeover_remaining_sim_sec = 0.0
+        if self.run_queue:
+            self.sim_state = "RUNNING_ORDER"
+        else:
+            self.sim_state = "RUNNING_ORDER"
 
     def start(self):
         if self.mode.get() != "sim":
             self.mode.set("sim")
+        if not self.run_queue:
+            self.sim_state = "RUNNING_ORDER"
+        elif self.current_run_index >= len(self.run_queue):
+            self.sim_state = "DONE"
+        elif self.sim_state == "DONE":
+            self.sim_state = "RUNNING_ORDER"
         self.running = True
         self._draw()
 
@@ -442,7 +461,10 @@ class App:
         self.bundle_case_total = 0
         self.regular_pack_buffer = 0
         self.bundle_pack_buffer = 0
-        self.prepare_run_queue()
+        self.current_run_index = 0
+        self.current_run_completed = 0
+        self.changeover_remaining_sim_sec = 0.0
+        self.sim_state = "RUNNING_ORDER"
         for item in list(self.trays) + list(self.cases):
             self.canvas.delete(item["id"])
         self.trays.clear()
@@ -453,7 +475,11 @@ class App:
     def spawn_tray(self):
         size = max(3, int(3 * SCALE))
         start_x, start_y = 80, 300
-        r = self.canvas.create_rectangle(sx(start_x), sy(start_y), sx(start_x) + size, sy(start_y) + size, fill=TRAY, outline=TRAY)
+        r = self.canvas.create_rectangle(
+            sx(start_x), sy(start_y),
+            sx(start_x) + size, sy(start_y) + size,
+            fill=TRAY, outline=TRAY
+        )
         main_path = [
             (80, 420),
             (620, 420),
@@ -468,6 +494,7 @@ class App:
             "i": 0,
             "bundle": False,
             "spawn_flow": self.flow.get(),
+            "counted_at_pack": False,
         })
 
     def spawn_regular_case(self):
@@ -522,44 +549,21 @@ class App:
             self.canvas.move(item["id"], dx / d * speed_px, dy / d * speed_px)
         return item["i"] >= len(item["path"])
 
-    def maybe_finish_changeover_flash(self):
-        if self.changeover_active and time.monotonic() >= self.changeover_flash_end_time:
-            self.changeover_active = False
-            self._draw()
-
     def begin_changeover(self):
-        delta = CHANGEOVER_MINUTES * 60.0
-        self.elapsed_sim_sec += delta
-        self.last_spawn_sec += delta
-
-        self.current_run_index += 1
-        self.current_run_completed = 0
-
-        self.changeover_active = True
-        self.changeover_flash_end_time = time.monotonic() + CHANGEOVER_FLASH_REAL_SEC
+        self.sim_state = "CHANGEOVER"
+        self.changeover_remaining_sim_sec = CHANGEOVER_MINUTES * 60.0
         self._draw()
 
-    def can_spawn_next_tray(self):
-        self.maybe_finish_changeover_flash()
-
-        if self.changeover_active:
-            return False
-
-        if not self.run_queue:
-            return True
+    def finish_changeover(self):
+        self.current_run_index += 1
+        self.current_run_completed = 0
+        self.changeover_remaining_sim_sec = 0.0
 
         if self.current_run_index >= len(self.run_queue):
-            return False
-
-        target = self.run_queue[self.current_run_index]
-        if self.current_run_completed < target:
-            return True
-
-        self.begin_changeover()
-
-        if self.current_run_index >= len(self.run_queue):
-            return False
-        return True
+            self.sim_state = "DONE"
+        else:
+            self.sim_state = "RUNNING_ORDER"
+        self._draw()
 
     def _update_kpis(self):
         self.lbl_tpm.config(text=f"{self.trays_per_min.get():.1f}")
@@ -581,71 +585,90 @@ class App:
         if self.running and self.mode.get() == "sim":
             total_limit = self.sim_minutes.get() * 60.0
             if self.elapsed_sim_sec < total_limit:
-                self.maybe_finish_changeover_flash()
+                # CHANGEOVER: minutes move, line paused
+                if self.sim_state == "CHANGEOVER":
+                    self.elapsed_sim_sec += sim_dt
+                    self.changeover_remaining_sim_sec -= sim_dt
+                    if self.changeover_remaining_sim_sec <= 0:
+                        self.finish_changeover()
 
-                self.elapsed_sim_sec += sim_dt
+                else:
+                    self.elapsed_sim_sec += sim_dt
 
-                interval = 60.0 / max(1.0, self.trays_per_min.get())
-                while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
-                    if self.can_spawn_next_tray():
-                        self.spawn_tray()
-                    self.last_spawn_sec += interval
-
-                main_path = [
-                    (80, 420),
-                    (620, 420),
-                    (620, 170),
-                    (690, 170),
-                    (690, 275),
-                    self.pack_point,
-                ]
-                main_len_px = self.path_length_px(main_path)
-                main_speed_px_per_sim_sec = main_len_px / (TRAVEL_TIME_TO_PACK_MIN * 60.0)
-                tray_speed_px = main_speed_px_per_sim_sec * sim_dt
-
-                remove = []
-                for t in self.trays:
-                    if self.move(t, tray_speed_px):
-                        if t["spawn_flow"] == "normal" and not t["bundle"]:
-                            remove.append(t)
-                            self.tray_total += 1
-                            if self.run_queue and self.current_run_index < len(self.run_queue):
-                                self.current_run_completed += 1
-                            self.regular_pack_buffer += 1
-                            if self.regular_pack_buffer >= 12:
-                                self.regular_pack_buffer = 0
-                                self.regular_case_total += 1
-                                self.spawn_regular_case()
-                        else:
-                            if not t["bundle"]:
-                                t["bundle"] = True
-                                t["path"] = [(670, 615), (1605, 615)]
-                                t["i"] = 0
+                    if self.sim_state == "RUNNING_ORDER" or (not self.run_queue and self.sim_state != "DONE"):
+                        interval = 60.0 / max(1.0, self.trays_per_min.get())
+                        while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
+                            # no run queue -> free run
+                            if not self.run_queue:
+                                self.spawn_tray()
                             else:
-                                remove.append(t)
+                                if self.sim_state == "RUNNING_ORDER" and self.current_run_index < len(self.run_queue):
+                                    self.spawn_tray()
+                                else:
+                                    break
+                            self.last_spawn_sec += interval
+
+                    # move line only when not in changeover
+                    main_path = [
+                        (80, 420),
+                        (620, 420),
+                        (620, 170),
+                        (690, 170),
+                        (690, 275),
+                        self.pack_point,
+                    ]
+                    main_len_px = self.path_length_px(main_path)
+                    main_speed_px_per_sim_sec = main_len_px / (TRAVEL_TIME_TO_PACK_MIN * 60.0)
+                    tray_speed_px = main_speed_px_per_sim_sec * sim_dt
+
+                    remove = []
+                    for t in self.trays:
+                        if self.move(t, tray_speed_px):
+                            # pack point reached
+                            if not t["counted_at_pack"]:
+                                t["counted_at_pack"] = True
                                 self.tray_total += 1
-                                if self.run_queue and self.current_run_index < len(self.run_queue):
+
+                                if self.run_queue and self.sim_state == "RUNNING_ORDER" and self.current_run_index < len(self.run_queue):
                                     self.current_run_completed += 1
-                                self.bundle_pack_buffer += 1
-                                if self.bundle_pack_buffer >= 12:
-                                    self.bundle_pack_buffer = 0
-                                    self.bundle_case_total += 1
-                                    self.spawn_bundle_case()
+                                    target = self.run_queue[self.current_run_index]
+                                    if self.current_run_completed >= target:
+                                        self.begin_changeover()
 
-                for t in remove:
-                    if t in self.trays:
-                        self.canvas.delete(t["id"])
-                        self.trays.remove(t)
+                            if t["spawn_flow"] == "normal" and not t["bundle"]:
+                                remove.append(t)
+                                self.regular_pack_buffer += 1
+                                if self.regular_pack_buffer >= 12:
+                                    self.regular_pack_buffer = 0
+                                    self.regular_case_total += 1
+                                    self.spawn_regular_case()
+                            else:
+                                if not t["bundle"]:
+                                    t["bundle"] = True
+                                    t["path"] = [(670, 615), (1605, 615)]
+                                    t["i"] = 0
+                                else:
+                                    remove.append(t)
+                                    self.bundle_pack_buffer += 1
+                                    if self.bundle_pack_buffer >= 12:
+                                        self.bundle_pack_buffer = 0
+                                        self.bundle_case_total += 1
+                                        self.spawn_bundle_case()
 
-                remove_cases = []
-                case_speed_px = 2.8
-                for c in self.cases:
-                    if self.move(c, case_speed_px):
-                        remove_cases.append(c)
-                for c in remove_cases:
-                    if c in self.cases:
-                        self.canvas.delete(c["id"])
-                        self.cases.remove(c)
+                    for t in remove:
+                        if t in self.trays:
+                            self.canvas.delete(t["id"])
+                            self.trays.remove(t)
+
+                    remove_cases = []
+                    case_speed_px = 2.8
+                    for c in self.cases:
+                        if self.move(c, case_speed_px):
+                            remove_cases.append(c)
+                    for c in remove_cases:
+                        if c in self.cases:
+                            self.canvas.delete(c["id"])
+                            self.cases.remove(c)
             else:
                 self.running = False
                 self.status.config(text="Simulation complete.")
