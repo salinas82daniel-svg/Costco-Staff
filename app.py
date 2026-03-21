@@ -13,20 +13,17 @@ RED = "#cc2f2f"
 ORANGE = "#f7b52c"
 
 WINDOW_W = 1500
-WINDOW_H = 920
+WINDOW_H = 980
 DESIGN_W = 1900
 DESIGN_H = 820
-SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 180) / DESIGN_H)
+SCALE = min((WINDOW_W - 40) / DESIGN_W, (WINDOW_H - 240) / DESIGN_H)
 
 TRAVEL_TIME_TO_PACK_MIN = 1.0
-CHANGEOVER_MINUTES = 7.0
-
 
 def sx(x): return x * SCALE
 def sy(y): return y * SCALE
 def ux(x): return x / SCALE
 def uy(y): return y / SCALE
-
 
 DEFAULT_LAYOUT = {
     "employees": [
@@ -56,7 +53,6 @@ DEFAULT_LAYOUT = {
     ],
 }
 
-
 class App:
     def __init__(self, root):
         self.root = root
@@ -71,6 +67,10 @@ class App:
         self.trays_per_min = tk.DoubleVar(value=80.0)
         self.sim_minutes = tk.DoubleVar(value=60.0)
         self.time_scale = tk.DoubleVar(value=20.0)
+
+        # New planning fields
+        self.changeovers = tk.IntVar(value=0)
+        self.minutes_per_changeover = tk.DoubleVar(value=7.0)
 
         self.layout = json.loads(json.dumps(DEFAULT_LAYOUT))
         self.drag_item = None
@@ -92,16 +92,6 @@ class App:
 
         self.pack_point = (670, 275)
 
-        self.run_queue = []
-        self.current_run_index = 0
-        self.current_run_completed = 0
-
-        # states: RUNNING_ORDER, CHANGEOVER, DONE
-        self.sim_state = "RUNNING_ORDER"
-        self.changeover_remaining_sim_sec = 0.0
-
-        self._run_entry_vars = [tk.StringVar(value="") for _ in range(10)]
-
         self._build_ui()
         self._draw()
         self._update_kpis()
@@ -119,17 +109,26 @@ class App:
         ttk.Radiobutton(top, text="Bundle Mode", variable=self.flow, value="bundle", command=self._draw).pack(side="left", padx=(0, 8))
 
         ttk.Label(top, text="Trays/min").pack(side="left")
-        ttk.Scale(top, from_=10, to=90, variable=self.trays_per_min, orient="horizontal", length=170).pack(side="left")
+        ttk.Scale(top, from_=10, to=90, variable=self.trays_per_min, orient="horizontal", length=170, command=lambda _=None: self._update_kpis()).pack(side="left")
         self.lbl_tpm = ttk.Label(top, text="80.0")
         self.lbl_tpm.pack(side="left", padx=(6, 10))
 
         ttk.Label(top, text="Sim minutes").pack(side="left")
-        ttk.Spinbox(top, from_=1, to=480, width=6, textvariable=self.sim_minutes).pack(side="left", padx=(2, 10))
+        ttk.Spinbox(top, from_=1, to=480, width=6, textvariable=self.sim_minutes, command=self._update_kpis).pack(side="left", padx=(2, 10))
 
         ttk.Label(top, text="Speed-up").pack(side="left")
-        ttk.Scale(top, from_=1, to=300, variable=self.time_scale, orient="horizontal", length=120).pack(side="left")
+        ttk.Scale(top, from_=1, to=300, variable=self.time_scale, orient="horizontal", length=120, command=lambda _=None: self._update_kpis()).pack(side="left")
         self.lbl_speed = ttk.Label(top, text="20x")
         self.lbl_speed.pack(side="left", padx=(6, 10))
+
+        planning = tk.Frame(self.root, bg=BG)
+        planning.pack(fill="x", padx=4, pady=(0, 4))
+
+        ttk.Label(planning, text="Changeovers").pack(side="left")
+        ttk.Spinbox(planning, from_=0, to=20, width=5, textvariable=self.changeovers, command=self._update_kpis).pack(side="left", padx=(4, 10))
+
+        ttk.Label(planning, text="Minutes/Changeover").pack(side="left")
+        ttk.Spinbox(planning, from_=0, to=60, increment=0.5, width=6, textvariable=self.minutes_per_changeover, command=self._update_kpis).pack(side="left", padx=(4, 10))
 
         controls = tk.Frame(self.root, bg=BG)
         controls.pack(fill="x", padx=4, pady=(0, 4))
@@ -149,12 +148,39 @@ class App:
         self.status = ttk.Label(controls, text="Edit mode: drag employees/notes. Double-click to rename.")
         self.status.pack(side="left", padx=10)
 
-        kpi_row = tk.Frame(self.root, bg=BG)
-        kpi_row.pack(fill="x", padx=4, pady=(0, 4))
+        # KPI row 1
+        kpi_row1 = tk.Frame(self.root, bg=BG)
+        kpi_row1.pack(fill="x", padx=4, pady=(0, 4))
 
         self.kpis = {}
-        for label in ["Minutes Simulated", "Trays Produced", "Regular Cases", "Bundle Cases", "Average Trays/Min"]:
-            box = tk.Frame(kpi_row, bg="white", highlightbackground="#bbbbbb", highlightthickness=1)
+        row1_labels = [
+            "Minutes Simulated",
+            "Trays Produced",
+            "Regular Cases",
+            "Bundle Cases",
+            "Average Trays/Min",
+        ]
+        for label in row1_labels:
+            box = tk.Frame(kpi_row1, bg="white", highlightbackground="#bbbbbb", highlightthickness=1)
+            box.pack(side="left", padx=4)
+            tk.Label(box, text=label, font=("Arial", 10, "bold"), bg="white").pack(padx=18, pady=(8, 2))
+            val = tk.Label(box, text="0", font=("Arial", 12), bg="white")
+            val.pack(padx=18, pady=(0, 8))
+            self.kpis[label] = val
+
+        # KPI row 2
+        kpi_row2 = tk.Frame(self.root, bg=BG)
+        kpi_row2.pack(fill="x", padx=4, pady=(0, 4))
+
+        row2_labels = [
+            "Minutes Lost",
+            "Run Minutes",
+            "Projected Trays",
+            "Projected Cases",
+            "Effective Trays/Min",
+        ]
+        for label in row2_labels:
+            box = tk.Frame(kpi_row2, bg="white", highlightbackground="#bbbbbb", highlightthickness=1)
             box.pack(side="left", padx=4)
             tk.Label(box, text=label, font=("Arial", 10, "bold"), bg="white").pack(padx=18, pady=(8, 2))
             val = tk.Label(box, text="0", font=("Arial", 12), bg="white")
@@ -179,57 +205,49 @@ class App:
     def open_settings(self):
         win = tk.Toplevel(self.root)
         win.title("Simulation Settings")
-        win.geometry("520x560")
+        win.geometry("420x240")
         win.transient(self.root)
 
         frame = tk.Frame(win, padx=12, pady=12)
         frame.pack(fill="both", expand=True)
 
-        tk.Label(frame, text="Trays per minute").grid(row=0, column=0, sticky="w")
         tpm_var = tk.StringVar(value=str(self.trays_per_min.get()))
+        sim_var = tk.StringVar(value=str(self.sim_minutes.get()))
+        speed_var = tk.StringVar(value=str(self.time_scale.get()))
+        co_var = tk.StringVar(value=str(self.changeovers.get()))
+        mpc_var = tk.StringVar(value=str(self.minutes_per_changeover.get()))
+
+        tk.Label(frame, text="Trays per minute").grid(row=0, column=0, sticky="w")
         tk.Entry(frame, textvariable=tpm_var, width=12).grid(row=0, column=1, sticky="w", padx=8)
 
-        tk.Label(frame, text="Speed-up").grid(row=1, column=0, sticky="w")
-        speed_var = tk.StringVar(value=str(self.time_scale.get()))
-        tk.Entry(frame, textvariable=speed_var, width=12).grid(row=1, column=1, sticky="w", padx=8)
+        tk.Label(frame, text="Sim minutes").grid(row=1, column=0, sticky="w")
+        tk.Entry(frame, textvariable=sim_var, width=12).grid(row=1, column=1, sticky="w", padx=8)
 
-        tk.Label(frame, text="Sim minutes").grid(row=2, column=0, sticky="w")
-        sim_var = tk.StringVar(value=str(self.sim_minutes.get()))
-        tk.Entry(frame, textvariable=sim_var, width=12).grid(row=2, column=1, sticky="w", padx=8)
+        tk.Label(frame, text="Speed-up").grid(row=2, column=0, sticky="w")
+        tk.Entry(frame, textvariable=speed_var, width=12).grid(row=2, column=1, sticky="w", padx=8)
 
-        tk.Label(frame, text="Product runs before changeover").grid(row=4, column=0, columnspan=2, sticky="w", pady=(14, 6))
+        tk.Label(frame, text="Changeovers").grid(row=3, column=0, sticky="w")
+        tk.Entry(frame, textvariable=co_var, width=12).grid(row=3, column=1, sticky="w", padx=8)
 
-        for i in range(10):
-            tk.Label(frame, text=f"Run {i+1} trays").grid(row=5+i, column=0, sticky="w")
-            tk.Entry(frame, textvariable=self._run_entry_vars[i], width=12).grid(row=5+i, column=1, sticky="w", padx=8)
+        tk.Label(frame, text="Minutes/Changeover").grid(row=4, column=0, sticky="w")
+        tk.Entry(frame, textvariable=mpc_var, width=12).grid(row=4, column=1, sticky="w", padx=8)
 
         def apply_settings():
             try:
                 self.trays_per_min.set(float(tpm_var.get()))
-                self.time_scale.set(float(speed_var.get()))
                 self.sim_minutes.set(float(sim_var.get()))
+                self.time_scale.set(float(speed_var.get()))
+                self.changeovers.set(int(float(co_var.get())))
+                self.minutes_per_changeover.set(float(mpc_var.get()))
             except ValueError:
                 self.status.config(text="Invalid settings entry.")
                 return
 
-            runs = []
-            for var in self._run_entry_vars:
-                txt = var.get().strip()
-                if txt:
-                    try:
-                        v = int(txt)
-                        if v > 0:
-                            runs.append(v)
-                    except ValueError:
-                        self.status.config(text="Run entries must be whole numbers.")
-                        return
-
-            self.run_queue = runs
-            self.status.config(text=f"Settings applied. {len(runs)} run(s) loaded.")
+            self._update_kpis()
             win.destroy()
 
-        tk.Button(frame, text="Apply", command=apply_settings).grid(row=16, column=0, pady=18, sticky="w")
-        tk.Button(frame, text="Close", command=win.destroy).grid(row=16, column=1, pady=18, sticky="w")
+        tk.Button(frame, text="Apply", command=apply_settings).grid(row=6, column=0, pady=18, sticky="w")
+        tk.Button(frame, text="Close", command=win.destroy).grid(row=6, column=1, pady=18, sticky="w")
 
     def _path_line(self, pts, color):
         coords = []
@@ -315,26 +333,7 @@ class App:
                 continue
             self.draw_note(n)
 
-        if self.mode.get() == "edit":
-            self.status.config(text="Edit mode: drag employees/notes. Double-click to rename.")
-        elif self.sim_state == "CHANGEOVER":
-            self.status.config(text="CHANGEOVER")
-            c.create_text(
-                sx(1030), sy(95),
-                text="CHANGEOVER",
-                fill="red",
-                font=("Arial", max(18, int(28 * SCALE)), "bold")
-            )
-        elif self.sim_state == "DONE":
-            self.status.config(text="Orders complete.")
-        else:
-            if self.run_queue:
-                self.status.config(
-                    text=f"Running order {self.current_run_index + 1}/{len(self.run_queue)} "
-                         f"({self.current_run_completed}/{self.run_queue[self.current_run_index]} trays)"
-                )
-            else:
-                self.status.config(text="Normal mode simulation." if show_bundle is False else "Bundle mode simulation.")
+        self.status.config(text="Edit mode: drag employees/notes. Double-click to rename." if self.mode.get() == "edit" else "Simulation running.")
 
     def draw_emp(self, e):
         x, y = e["x"], e["y"]
@@ -428,30 +427,6 @@ class App:
                 self.layout = json.load(fh)
             self._draw()
 
-    def prepare_run_queue(self):
-        self.current_run_index = 0
-        self.current_run_completed = 0
-        self.changeover_remaining_sim_sec = 0.0
-        if self.run_queue:
-            self.sim_state = "RUNNING_ORDER"
-        else:
-            self.sim_state = "RUNNING_ORDER"
-
-    def start(self):
-        if self.mode.get() != "sim":
-            self.mode.set("sim")
-        if not self.run_queue:
-            self.sim_state = "RUNNING_ORDER"
-        elif self.current_run_index >= len(self.run_queue):
-            self.sim_state = "DONE"
-        elif self.sim_state == "DONE":
-            self.sim_state = "RUNNING_ORDER"
-        self.running = True
-        self._draw()
-
-    def pause(self):
-        self.running = False
-
     def reset(self):
         self.running = False
         self.elapsed_sim_sec = 0.0
@@ -461,16 +436,20 @@ class App:
         self.bundle_case_total = 0
         self.regular_pack_buffer = 0
         self.bundle_pack_buffer = 0
-        self.current_run_index = 0
-        self.current_run_completed = 0
-        self.changeover_remaining_sim_sec = 0.0
-        self.sim_state = "RUNNING_ORDER"
         for item in list(self.trays) + list(self.cases):
             self.canvas.delete(item["id"])
         self.trays.clear()
         self.cases.clear()
         self._draw()
         self._update_kpis()
+
+    def start(self):
+        if self.mode.get() != "sim":
+            self.mode.set("sim")
+        self.running = True
+
+    def pause(self):
+        self.running = False
 
     def spawn_tray(self):
         size = max(3, int(3 * SCALE))
@@ -494,7 +473,6 @@ class App:
             "i": 0,
             "bundle": False,
             "spawn_flow": self.flow.get(),
-            "counted_at_pack": False,
         })
 
     def spawn_regular_case(self):
@@ -549,25 +527,10 @@ class App:
             self.canvas.move(item["id"], dx / d * speed_px, dy / d * speed_px)
         return item["i"] >= len(item["path"])
 
-    def begin_changeover(self):
-        self.sim_state = "CHANGEOVER"
-        self.changeover_remaining_sim_sec = CHANGEOVER_MINUTES * 60.0
-        self._draw()
-
-    def finish_changeover(self):
-        self.current_run_index += 1
-        self.current_run_completed = 0
-        self.changeover_remaining_sim_sec = 0.0
-
-        if self.current_run_index >= len(self.run_queue):
-            self.sim_state = "DONE"
-        else:
-            self.sim_state = "RUNNING_ORDER"
-        self._draw()
-
     def _update_kpis(self):
         self.lbl_tpm.config(text=f"{self.trays_per_min.get():.1f}")
         self.lbl_speed.config(text=f"{int(self.time_scale.get())}x")
+
         self.kpis["Minutes Simulated"].config(text=f"{self.elapsed_sim_sec / 60:.1f}")
         self.kpis["Trays Produced"].config(text=str(self.tray_total))
         self.kpis["Regular Cases"].config(text=str(self.regular_case_total))
@@ -578,6 +541,24 @@ class App:
             avg = self.tray_total / (self.elapsed_sim_sec / 60.0)
         self.kpis["Average Trays/Min"].config(text=f"{avg:.1f}")
 
+        # New planning math
+        sim_min = max(0.0, float(self.sim_minutes.get()))
+        co = max(0, int(self.changeovers.get()))
+        mpc = max(0.0, float(self.minutes_per_changeover.get()))
+        tpm = max(0.0, float(self.trays_per_min.get()))
+
+        minutes_lost = co * mpc
+        run_minutes = max(0.0, sim_min - minutes_lost)
+        projected_trays = run_minutes * tpm
+        projected_cases = projected_trays / 12.0 if projected_trays > 0 else 0.0
+        effective_tpm = projected_trays / sim_min if sim_min > 0 else 0.0
+
+        self.kpis["Minutes Lost"].config(text=f"{minutes_lost:.1f}")
+        self.kpis["Run Minutes"].config(text=f"{run_minutes:.1f}")
+        self.kpis["Projected Trays"].config(text=f"{projected_trays:,.0f}")
+        self.kpis["Projected Cases"].config(text=f"{projected_cases:,.1f}")
+        self.kpis["Effective Trays/Min"].config(text=f"{effective_tpm:.1f}")
+
     def _tick(self):
         dt_real = 0.05
         sim_dt = dt_real * self.time_scale.get()
@@ -585,90 +566,64 @@ class App:
         if self.running and self.mode.get() == "sim":
             total_limit = self.sim_minutes.get() * 60.0
             if self.elapsed_sim_sec < total_limit:
-                # CHANGEOVER: minutes move, line paused
-                if self.sim_state == "CHANGEOVER":
-                    self.elapsed_sim_sec += sim_dt
-                    self.changeover_remaining_sim_sec -= sim_dt
-                    if self.changeover_remaining_sim_sec <= 0:
-                        self.finish_changeover()
+                self.elapsed_sim_sec += sim_dt
 
-                else:
-                    self.elapsed_sim_sec += sim_dt
+                interval = 60.0 / max(1.0, self.trays_per_min.get())
+                while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
+                    self.spawn_tray()
+                    self.last_spawn_sec += interval
 
-                    if self.sim_state == "RUNNING_ORDER" or (not self.run_queue and self.sim_state != "DONE"):
-                        interval = 60.0 / max(1.0, self.trays_per_min.get())
-                        while self.elapsed_sim_sec - self.last_spawn_sec >= interval:
-                            # no run queue -> free run
-                            if not self.run_queue:
-                                self.spawn_tray()
+                main_path = [
+                    (80, 420),
+                    (620, 420),
+                    (620, 170),
+                    (690, 170),
+                    (690, 275),
+                    self.pack_point,
+                ]
+                main_len_px = self.path_length_px(main_path)
+                main_speed_px_per_sim_sec = main_len_px / (TRAVEL_TIME_TO_PACK_MIN * 60.0)
+                tray_speed_px = main_speed_px_per_sim_sec * sim_dt
+
+                remove = []
+                for t in self.trays:
+                    if self.move(t, tray_speed_px):
+                        if t["spawn_flow"] == "normal" and not t["bundle"]:
+                            remove.append(t)
+                            self.tray_total += 1
+                            self.regular_pack_buffer += 1
+                            if self.regular_pack_buffer >= 12:
+                                self.regular_pack_buffer = 0
+                                self.regular_case_total += 1
+                                self.spawn_regular_case()
+                        else:
+                            if not t["bundle"]:
+                                t["bundle"] = True
+                                t["path"] = [(670, 615), (1605, 615)]
+                                t["i"] = 0
                             else:
-                                if self.sim_state == "RUNNING_ORDER" and self.current_run_index < len(self.run_queue):
-                                    self.spawn_tray()
-                                else:
-                                    break
-                            self.last_spawn_sec += interval
-
-                    # move line only when not in changeover
-                    main_path = [
-                        (80, 420),
-                        (620, 420),
-                        (620, 170),
-                        (690, 170),
-                        (690, 275),
-                        self.pack_point,
-                    ]
-                    main_len_px = self.path_length_px(main_path)
-                    main_speed_px_per_sim_sec = main_len_px / (TRAVEL_TIME_TO_PACK_MIN * 60.0)
-                    tray_speed_px = main_speed_px_per_sim_sec * sim_dt
-
-                    remove = []
-                    for t in self.trays:
-                        if self.move(t, tray_speed_px):
-                            # pack point reached
-                            if not t["counted_at_pack"]:
-                                t["counted_at_pack"] = True
-                                self.tray_total += 1
-
-                                if self.run_queue and self.sim_state == "RUNNING_ORDER" and self.current_run_index < len(self.run_queue):
-                                    self.current_run_completed += 1
-                                    target = self.run_queue[self.current_run_index]
-                                    if self.current_run_completed >= target:
-                                        self.begin_changeover()
-
-                            if t["spawn_flow"] == "normal" and not t["bundle"]:
                                 remove.append(t)
-                                self.regular_pack_buffer += 1
-                                if self.regular_pack_buffer >= 12:
-                                    self.regular_pack_buffer = 0
-                                    self.regular_case_total += 1
-                                    self.spawn_regular_case()
-                            else:
-                                if not t["bundle"]:
-                                    t["bundle"] = True
-                                    t["path"] = [(670, 615), (1605, 615)]
-                                    t["i"] = 0
-                                else:
-                                    remove.append(t)
-                                    self.bundle_pack_buffer += 1
-                                    if self.bundle_pack_buffer >= 12:
-                                        self.bundle_pack_buffer = 0
-                                        self.bundle_case_total += 1
-                                        self.spawn_bundle_case()
+                                self.tray_total += 1
+                                self.bundle_pack_buffer += 1
+                                if self.bundle_pack_buffer >= 12:
+                                    self.bundle_pack_buffer = 0
+                                    self.bundle_case_total += 1
+                                    self.spawn_bundle_case()
 
-                    for t in remove:
-                        if t in self.trays:
-                            self.canvas.delete(t["id"])
-                            self.trays.remove(t)
+                for t in remove:
+                    if t in self.trays:
+                        self.canvas.delete(t["id"])
+                        self.trays.remove(t)
 
-                    remove_cases = []
-                    case_speed_px = 2.8
-                    for c in self.cases:
-                        if self.move(c, case_speed_px):
-                            remove_cases.append(c)
-                    for c in remove_cases:
-                        if c in self.cases:
-                            self.canvas.delete(c["id"])
-                            self.cases.remove(c)
+                remove_cases = []
+                case_speed_px = 2.8
+                for c in self.cases:
+                    if self.move(c, case_speed_px):
+                        remove_cases.append(c)
+                for c in remove_cases:
+                    if c in self.cases:
+                        self.canvas.delete(c["id"])
+                        self.cases.remove(c)
             else:
                 self.running = False
                 self.status.config(text="Simulation complete.")
